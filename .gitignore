@@ -1,0 +1,6 @@
+notes/
+__pycache__/
+*.pyc
+*.log
+env.sh
+.DS_Store

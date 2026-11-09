@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# kestrel — bug-bounty recon framework. One command, every phase, program-aware.
+#
+#   kestrel new [program]        onboarding: scope, identification, rules (asked once)
+#   kestrel recon [program]      full recon pipeline
+#   kestrel status [program]     what the run produced, leads first
+#   kestrel verify [program]     scope QA: nothing out of scope touched
+#   kestrel ports [program]      passive (Shodan InternetDB) + active port scan if allowed
+#   kestrel retest [program]     only what is new since the last scan
+#   kestrel secrets [program]    GitHub leak hunting
+#   kestrel triage [program]     offline triage of the catch into leads (no traffic)
+#   kestrel info [program]       program settings and scope summary
+#   kestrel report [program]     build one HTML report from the data you have
+#   kestrel scope [program]      view / edit the scope
+#   kestrel ls                   all programs
+#   kestrel doctor [--install]   is this machine ready
+#
+# The program can be omitted: kestrel uses the last one you worked on.
+set -euo pipefail
+
+KESTREL_VERSION="0.1.0-dev"
+
+# resolve our real location (works through symlinks, e.g. ~/.local/bin/kestrel)
+_src="${BASH_SOURCE[0]}"
+while [ -L "$_src" ]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+KESTREL_ROOT="$(cd -P "$(dirname "$_src")" && pwd)"
+export KESTREL_ROOT
+
+# shellcheck source=lib/ui.sh
+. "$KESTREL_ROOT/lib/ui.sh"
+# shellcheck source=lib/core.sh
+. "$KESTREL_ROOT/lib/core.sh"
+for _f in "$KESTREL_ROOT"/cmd/*.sh; do
+  # shellcheck disable=SC1090
+  . "$_f"
+done
+
+usage() {
+  ui_banner "$KESTREL_VERSION"
+  sed -n '5,18p' "$KESTREL_ROOT/kestrel" | sed 's/^# \{0,1\}//' >&2
+  printf '\n  kestrel <command> --help for details\n\n' >&2
+}
+
+# engine <script> <program> [args...] — run an engine script on a program
+engine() {
+  local script="$1" prog="$2"; shift 2
+  prog="$(resolve_program "$prog")"
+  load_program "$prog"
+  bash "$KESTREL_ROOT/libexec/$script" "$@"
+}
+
+# split "[program] [args]": the first arg is the program unless it starts with '-'
+dispatch() {
+  local cmd="${1:-}"; shift || true
+  local prog=""
+  if [ $# -gt 0 ] && [[ "$1" != -* ]]; then prog="$1"; shift; fi
+  case "$cmd" in
+    new)              cmd_new ${prog:+"$prog"} "$@" ;;
+    scope)            cmd_scope ${prog:+"$prog"} "$@" ;;
+    info)             cmd_info ${prog:+"$prog"} "$@" ;;
+    report)           cmd_report ${prog:+"$prog"} "$@" ;;
+    ls|list)          cmd_ls ;;
+    doctor)           cmd_doctor ${prog:+"$prog"} "$@" ;;
+    recon)            cmd_recon ${prog:+"$prog"} "$@" ;;
+    status)           cmd_status ${prog:+"$prog"} "$@" ;;
+    verify)           cmd_verify ${prog:+"$prog"} "$@" ;;
+    ports)            cmd_ports ${prog:+"$prog"} "$@" ;;
+    retest)           cmd_retest ${prog:+"$prog"} "$@" ;;
+    secrets)          cmd_secrets ${prog:+"$prog"} "$@" ;;
+    triage|loot)      cmd_triage ${prog:+"$prog"} "$@" ;;
+    version|--version|-V) printf 'kestrel %s\n' "$KESTREL_VERSION" ;;
+    ""|help|-h|--help) usage ;;
+    *) ui_die "unknown command '$cmd'" "kestrel help" ;;
+  esac
+}
+
+dispatch "$@"

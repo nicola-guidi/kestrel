@@ -57,7 +57,11 @@ else
     "recon/surface_ok.txt|surface_ok (fuzz/api/js input)" ; do
     f="${pair%%|*}"; label="${pair#*|}"
     [ -f "$f" ] || continue
-    hit=$(grep -iFf recon/oos.txt "$f" 2>/dev/null || true)
+    # Match against the PROBED hostname (field 1), not the whole line: httpx writes
+    # live.txt with -location, so an in-scope host that 3xx-redirects to an OOS host
+    # carries that OOS name in its Location column. That host was never probed as an
+    # asset (the enum filter kept it out of the input), so it must not count as a leak.
+    hit=$(hostof < "$f" | sort -u | grep -iFf recon/oos.txt 2>/dev/null || true)
     if [ -z "$hit" ]; then okk "no OOS in $label"
     else bad "OOS leaked into $label ($f)" "$hit"; fi
   done

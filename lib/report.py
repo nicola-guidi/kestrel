@@ -298,6 +298,8 @@ def section_triage(w, r, nav):
         ("admin_panels.txt", None, lambda: rows_list("admin_panels.txt")),
         ("exposed_services.txt", None, lambda: rows_list("exposed_services.txt")),
         ("code_hosts.txt", None, lambda: rows_list("code_hosts.txt")),
+        ("shodan_ports.txt", ["IP", "open ports", "CVEs"], lambda: rows_tab("shodan_ports.txt", 3)),
+        ("wayback_interesting.txt", None, lambda: rows_list("wayback_interesting.txt")),
     ]
     surface = [
         ("API behind 401/403", "api_gated.txt", 2, ["status", "url"]),
@@ -324,7 +326,9 @@ def section_triage(w, r, nav):
 
     titles = {"api_open.txt": "Open JSON 200 endpoints", "fuzz_juicy.txt": "Sensitive paths answering 200",
               "js_secrets.txt": "Secret-looking strings in JS bundles", "admin_panels.txt": "Admin / login surfaces",
-              "exposed_services.txt": "Exposed dashboards / brokers", "code_hosts.txt": "Git / CI hosts"}
+              "exposed_services.txt": "Exposed dashboards / brokers", "code_hosts.txt": "Git / CI hosts",
+              "shodan_ports.txt": "IPs with open ports (passive Shodan)",
+              "wayback_interesting.txt": "Archived URLs with a juicy extension (Wayback)"}
     if has_leads:
         r += "<h3 class=host>🎯 Leads — look first</h3>"
         for fname, headers, build in leads:
@@ -348,6 +352,33 @@ def section_triage(w, r, nav):
             else:
                 r += "<table>" + "".join(f"<tr><td class=u>{c[0]}</td></tr>" for c in rows[:300]) + "</table>"
             r += "</details>"
+
+
+def section_wayback(w, r, nav):
+    base = os.path.join(w, "recon/wayback")
+    urls = read_lines(os.path.join(base, "urls.txt"))
+    interesting = read_lines(os.path.join(base, "interesting.txt"))
+    params = read_lines(os.path.join(base, "params.txt"))
+    if not urls and not interesting and not params:
+        return
+    nav.append(("wayback", "Wayback"))
+    r += "<h2 id=wayback>Wayback &amp; archives</h2>"
+    r += ("<p><span class='pill pass'>osint</span> historical URLs from public archives — no "
+          "traffic to the target. Candidates, not confirmed: verify by hand.</p>")
+    if interesting:
+        r += f"<h4>Juicy extensions — {len(interesting)}</h4>"
+        r += "<table>" + "".join(f"<tr><td class=u>{esc(u)}</td></tr>" for u in interesting[:200]) + "</table>"
+    if params:
+        rows = []
+        for l in params:
+            parts = l.split("\t") + [""]
+            rows.append((f"<code>{esc(parts[0])}</code>", f"<code>{esc(parts[1])}</code>"))
+        r += f"<h4>Parameter names from archives — {len(params)}</h4>"
+        r.table(["param", "host(s)"], rows)
+    if urls:
+        r += f"<details><summary>all in-scope archived URLs — {len(urls)}</summary>"
+        r += "<table>" + "".join(f"<tr><td class=u>{esc(u)}</td></tr>" for u in urls[:1000]) + "</table>"
+        r += "</details>"
 
 
 def section_retest(w, r, nav):
@@ -434,6 +465,7 @@ def main(w, out):
     section_fuzz(w, body, nav_items)
     section_ports(w, body, nav_items)
     section_js(w, body, nav_items)
+    section_wayback(w, body, nav_items)
     section_secrets(w, body, nav_items)
     section_retest(w, body, nav_items)
 

@@ -22,6 +22,7 @@ Writes recon/triage/:
   code_hosts.txt      git/CI hosts (gitlab/jenkins/...)
   exposed_services.txt dashboards/brokers (grafana/kibana/rabbitmq/...)
   shodan_ports.txt    IP -> open ports (+ CVE count) from passive Shodan (kestrel shodan)
+  wayback_interesting.txt  archived URLs with a juicy extension (kestrel wayback)
   catchall.txt        catch-all hosts to keep OUT of the leads (reference)
 """
 import glob
@@ -267,10 +268,17 @@ def main(w):
     counts["JS_UUIDS"] = write(os.path.join(out, "js_uuids.txt"), js_uuid)
     counts["JS_URLS"] = write(os.path.join(out, "js_urls.txt"), js_url)
     counts["PARAMS"] = write(os.path.join(out, "params.txt"), params_rows)
+    # archived (wayback) material, if 'kestrel wayback' has run — paths and params to fuzz with
+    wb_params = [l.split("\t", 1)[0] for l in lines(os.path.join(w, "recon/wayback/params.txt"))]
+    wb_paths = []
+    for u in lines(os.path.join(w, "recon/wayback/urls.txt")):
+        p = re.sub(r"^https?://[^/]+", "", u).split("?", 1)[0]
+        if p and p != "/":
+            wb_paths.append(p)
     # plain, host-less wordlists (first column only) — ready to fuzz across the program's other hosts
     plain = lambda rows: [r.split("\t", 1)[0] for r in rows]
-    write(os.path.join(out, "paths_fuzz.txt"), plain(js_ep))
-    write(os.path.join(out, "params_fuzz.txt"), plain(params_rows))
+    write(os.path.join(out, "paths_fuzz.txt"), plain(js_ep) + wb_paths)
+    write(os.path.join(out, "params_fuzz.txt"), plain(params_rows) + wb_params)
     counts["ROBOTS_NONSTD"] = write(os.path.join(out, "robots_nonstd.txt"),
         [l for l in robots if not re.search(
             r"README|LICENSE|/admin/?$|composer|/modules/|/themes/|/sites/|/core/", l, re.I)])
@@ -293,6 +301,8 @@ def main(w):
         if ip and ports:
             shodan_rows.append(f"{ip}\t{ports}" + (f"\tCVEs={ncve}" if ncve else ""))
     counts["SHODAN"] = write(os.path.join(out, "shodan_ports.txt"), shodan_rows)
+    counts["WAYBACK"] = write(os.path.join(out, "wayback_interesting.txt"),
+        lines(os.path.join(w, "recon/wayback/interesting.txt")))
     counts["CATCHALL"] = write(os.path.join(out, "catchall.txt"),
         lines(os.path.join(w, "recon/surface_catchall.txt")))
 

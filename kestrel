@@ -8,6 +8,7 @@
 #   kestrel verify [program]     scope QA: nothing out of scope touched
 #   kestrel ports [program]      active port scan on the declared in-scope IP ranges (if allowed)
 #   kestrel shodan [program]     passive Shodan InternetDB over the collected IPs (no traffic)
+#   kestrel wayback [program]    historical URLs from public archives (OSINT, no traffic)
 #   kestrel retest [program]     only what is new since the last scan
 #   kestrel secrets [program]    GitHub leak hunting
 #   kestrel triage [program]     offline triage of the catch into leads (no traffic)
@@ -43,7 +44,7 @@ done
 
 usage() {
   ui_banner "$KESTREL_VERSION"
-  sed -n '5,19p' "$KESTREL_ROOT/kestrel" | sed 's/^# \{0,1\}//' >&2
+  sed -n '5,20p' "$KESTREL_ROOT/kestrel" | sed 's/^# \{0,1\}//' >&2
   printf '\n  kestrel <command> --help for details\n\n' >&2
 }
 
@@ -72,6 +73,7 @@ dispatch() {
     verify)           cmd_verify ${prog:+"$prog"} "$@" ;;
     ports)            cmd_ports ${prog:+"$prog"} "$@" ;;
     shodan)           cmd_shodan ${prog:+"$prog"} "$@" ;;
+    wayback)          cmd_wayback ${prog:+"$prog"} "$@" ;;
     retest)           cmd_retest ${prog:+"$prog"} "$@" ;;
     secrets)          cmd_secrets ${prog:+"$prog"} "$@" ;;
     triage|loot)      cmd_triage ${prog:+"$prog"} "$@" ;;

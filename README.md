@@ -21,6 +21,7 @@ kestrel recon acme           # full recon pipeline
 kestrel status acme          # what it found, leads first
 kestrel ports acme           # active port scan on the declared in-scope IP ranges only
 kestrel shodan acme          # passive Shodan InternetDB over the collected IPs (no traffic)
+kestrel wayback acme         # historical URLs from public archives (OSINT, no traffic)
 kestrel triage acme          # offline triage of the catch into leads
 kestrel report acme          # one HTML report from whatever data exists
 ```
@@ -57,7 +58,8 @@ with apt. On non-Debian systems it tells you what to install by hand.
 | `kestrel verify [program]` | scope QA: nothing out of scope touched | none |
 | `kestrel ports [program]` | active naabu/nmap on the declared in-scope IP ranges only | yes |
 | `kestrel shodan [program]` | passive Shodan InternetDB over the collected IPs | passive |
-| `kestrel triage [program]` | offline triage of recon/ports/shodan/js into leads | none |
+| `kestrel wayback [program]` | historical URLs from public archives (Wayback CDX + gau) | OSINT |
+| `kestrel triage [program]` | offline triage of recon/ports/shodan/wayback/js into leads | none |
 | `kestrel retest [program]` | only what is new since the last scan | yes |
 | `kestrel secrets [program]` | GitHub leak hunting | OSINT |
 | `kestrel report [program]` | one HTML report from the data on disk | none |
@@ -143,13 +145,29 @@ range, reverse DNS not a scope domain) is never queried and never written, only 
 Out-of-scope IPs are never touched. `--max <n>` raises the query cap (default 4096). Results land
 in `recon/ports/shodan.*` and feed triage and the report.
 
+## Wayback (OSINT)
+
+`kestrel wayback` pulls URLs the target's hosts exposed in the **past** — paths and parameters the
+live crawl can't see — from public archives, with **zero packets to the target**. It is modular:
+
+- **Wayback Machine CDX** always runs (no dependency, built on Python's stdlib).
+- **gau** is used only if it is installed, adding CommonCrawl, OTX and urlscan; if it is missing,
+  kestrel says so and runs the CDX step alone.
+
+Everything is filtered back to scope — in-scope hosts only, out-of-scope hosts/keywords and
+out-of-scope path prefixes dropped, static-asset noise removed. Archived URLs are **candidates,
+not confirmed endpoints**: verify each by hand with a minimal-touch request. Output lands in
+`recon/wayback/` (`urls.txt`, `params.txt`, `interesting.txt`) and feeds triage (the paths and
+params join the fuzz lists, juicy extensions become a lead) and the report.
+
 ## Triage (offline)
 
-`kestrel triage` is a pure offline pass over what recon, ports, shodan and JS already collected
-— zero network. It sorts the catch into lead files under `recon/triage/`, leads first:
+`kestrel triage` is a pure offline pass over what recon, ports, shodan, wayback and JS already
+collected — zero network. It sorts the catch into lead files under `recon/triage/`, leads first:
 
 - open JSON 200 endpoints, sensitive paths answering 200, admin / login surfaces, exposed
-  dashboards and brokers, git / CI hosts, IPs with open ports from passive Shodan;
+  dashboards and brokers, git / CI hosts, IPs with open ports from passive Shodan, archived URLs
+  with a juicy extension;
 - then the surface: APIs behind 401/403, paths mined from JS bundles, paths from robots /
   sitemap, interesting crawl URLs, a parameter-name wordlist for fuzzing, real UUIDs.
 

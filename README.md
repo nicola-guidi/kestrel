@@ -90,12 +90,16 @@ Each program lives in `<workspace>/<program>/`. The workspace (default `~/hunts`
 on the first `kestrel new` and saved in `~/.config/kestrel/config`; `KESTREL_BASE=<dir>`
 overrides it for one run.
 
-```
-kestrel.conf     settings            scope            the scope (kestrel scope to edit)
-headers.txt      custom headers      notes/rules.md   program rules
-recon/ content/ js/   results        notes/*.log      engine + tool logs
-report.html      the report          env.sh           legacy compatibility
-```
+| path | what it holds |
+|---|---|
+| `kestrel.conf` | settings |
+| `scope` | the scope (edit with `kestrel scope`) |
+| `headers.txt` | custom headers |
+| `notes/rules.md` | program rules |
+| `recon/` `content/` `js/` | results |
+| `notes/*.log` | engine + tool logs |
+| `report.html` | the report |
+| `env.sh` | legacy compatibility |
 
 ## Recon pipeline
 

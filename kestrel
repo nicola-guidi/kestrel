@@ -14,6 +14,7 @@
 #   kestrel triage [program]     offline triage of the catch into leads (no traffic)
 #   kestrel info [program]       program settings and scope summary
 #   kestrel report [program]     build one HTML report from the data you have
+#   kestrel db <sub>             SQLite index to cross-reference data across programs
 #   kestrel scope [program]      view / edit the scope
 #   kestrel ls                   all programs
 #   kestrel doctor [--install]   is this machine ready
@@ -44,7 +45,7 @@ done
 
 usage() {
   ui_banner "$KESTREL_VERSION"
-  sed -n '5,20p' "$KESTREL_ROOT/kestrel" | sed 's/^# \{0,1\}//' >&2
+  sed -n '5,21p' "$KESTREL_ROOT/kestrel" | sed 's/^# \{0,1\}//' >&2
   printf '\n  kestrel <command> --help for details\n\n' >&2
 }
 
@@ -77,6 +78,7 @@ dispatch() {
     retest)           cmd_retest ${prog:+"$prog"} "$@" ;;
     secrets)          cmd_secrets ${prog:+"$prog"} "$@" ;;
     triage|loot)      cmd_triage ${prog:+"$prog"} "$@" ;;
+    db)               cmd_db ${prog:+"$prog"} "$@" ;;
     version|--version|-V) printf 'kestrel %s\n' "$KESTREL_VERSION" ;;
     ""|help|-h|--help) usage ;;
     *) ui_die "unknown command '$cmd'" "kestrel help" ;;

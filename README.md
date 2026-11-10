@@ -63,6 +63,7 @@ with apt. On non-Debian systems it tells you what to install by hand.
 | `kestrel retest [program]` | only what is new since the last scan | yes |
 | `kestrel secrets [program]` | GitHub leak hunting | OSINT |
 | `kestrel report [program]` | one HTML report from the data on disk | none |
+| `kestrel db <sub>` | SQLite index to cross-reference data across programs | none |
 
 The program name can be omitted: kestrel uses the last one you worked on. Every command has
 `kestrel <command> --help` for its own options.
@@ -187,6 +188,51 @@ confirmed endpoint: verify it by hand with a minimal-touch request.
 of recon / ports / triage / secrets / retest already run, on demand, no traffic. The triage
 pass is refreshed automatically each time, and ffuf blanket-403 walls and firewalled IPs are
 collapsed so the real leads stand out. `--open` opens it in the browser.
+
+## Database (centralised, queryable)
+
+`kestrel db` is a centralised SQLite store of everything kestrel collected on a target — in the
+spirit of Metasploit's db (hosts / services / vulns), but built from kestrel's richer data. It does
+**not** replace the flat files: they stay the source of truth, and the db is a derived store you can
+rebuild any time by reading them (`db sync` is idempotent). One shared file, `<workspace>/kestrel.db`,
+inspectable with the `sqlite3` CLI or any viewer — nothing hidden.
+
+```
+kestrel db sync [program]    # read the program's files on disk into the db (idempotent)
+kestrel db stats             # row counts per table
+kestrel db host www.acme.com # full dossier for one host (see below)
+kestrel db ip 203.0.113.10   # full dossier for one IP
+kestrel db path /admin       # every host exposing a URL whose path matches /admin
+kestrel db view services acme -s elastic   # table view with filters
+kestrel db query "SELECT ip, port, service FROM ports WHERE service LIKE '%elastic%'"
+kestrel db shared-ips        # IPs that appear in more than one program
+kestrel db shared-hosts      # registrable domains seen in more than one program
+```
+
+**Entity view — recall one host or IP and see everything.** The point of the db is that you ask
+for a host, URL or IP and it gathers across every table at once:
+
+- `kestrel db host <name>` — the host's live status, the IPs it resolves to, the services/ports on
+  those IPs, Shodan + CVEs, every endpoint ever seen for it (live probe · crawl · wayback archive),
+  and the triage leads attributed to it.
+- `kestrel db ip <addr>` — the host(s) that resolve to the IP (so you know an open port on
+  `203.0.113.10:80` already belongs to a host you browsed, same target, not a stranger), its
+  services/ports and Shodan CVEs.
+- `kestrel db path <substr>` — the pivot: every host exposing a URL whose path matches, across all
+  data sources.
+
+The host↔IP link comes from the resolution map `kestrel shodan` writes (`recon/ports/host_ip_map.txt`),
+so run `shodan` before `db sync` to populate it.
+
+Tables: `programs`, `hosts` (status/info), `ips`, `host_ips` (the resolution link), `ports`
+(source active/shodan, with service + version), `vulns` (CVEs), `endpoints` (source live/crawl/wayback,
+with host), `leads` (the triage buckets, host attributed). Each `sync` stamps a `snapshot`, the
+groundwork for time diffs. Run `db sync` at the end of a program's pipeline (or whenever), then recall
+or query across all of them.
+
+`db view <kind>` gives a flat table view (`hosts|services|ports|endpoints|vulns|leads`) with filters
+`-S <host>`, `-p <port>`, `-s <service>`, `--status <code>`, `-k <lead-kind>`, `-m <substr>`, `--live`;
+pass `--all` (the default for the entity views) to span every program instead of one.
 
 ## Retest
 

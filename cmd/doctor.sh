@@ -29,8 +29,9 @@ DOCTOR_TOOLS=(
   "gh|secrets|core|apt:gh"
   "trufflehog|secrets|core|script:trufflehog"
   "gitleaks|secrets|opt|go:github.com/zricethezav/gitleaks/v8@latest"
+  "gau|osint|opt|go:github.com/lc/gau/v2/cmd/gau@latest"
 )
-DOCTOR_GROUPS=(core recon ports secrets)
+DOCTOR_GROUPS=(core recon ports secrets osint)
 
 # shodan_probe → HTTP code of one InternetDB lookup of a neutral public IP (never a target)
 shodan_probe() {

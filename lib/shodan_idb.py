@@ -106,6 +106,13 @@ def main(work, max_ips):
     seen = set()
     third_party = 0        # excluded: resolves from a scope host but not owned
     skipped_oos = 0
+    host_ip_pairs = []     # (host, ip) resolution map for owned IPs → recon/ports/host_ip_map.txt
+    ptr_cache = {}
+
+    def cached_ptr(ip):
+        if ip not in ptr_cache:
+            ptr_cache[ip] = ptr(ip)
+        return ptr_cache[ip]
 
     def consider(ip, src):
         """Add an already-owned IP to the queue (dedup, OOS-filtered)."""
@@ -132,21 +139,21 @@ def main(work, max_ips):
         except OSError:
             continue
         for ip in addrs:
-            if ip in seen:
-                continue
             addr = ipaddress.ip_address(ip)
             if is_oos(addr):
-                seen.add(ip)
-                skipped_oos += 1
+                if ip not in seen:
+                    seen.add(ip)
+                    skipped_oos += 1
                 continue
-            if in_ranges(addr):
-                consider(ip, h)
-                continue
-            p = ptr(ip)
-            if p and ends_in_scope(p, doms):
-                consider(ip, h)
-            else:
-                seen.add(ip)        # third-party: never queried, never written
+            owned = in_ranges(addr)
+            if not owned:
+                p = cached_ptr(ip)
+                owned = bool(p and ends_in_scope(p, doms))
+            if owned:
+                host_ip_pairs.append((h, ip))   # record the resolution (every host→ip pair)
+                consider(ip, h)                  # querying is deduped inside consider
+            elif ip not in seen:
+                seen.add(ip)                     # third-party: never queried, never written
                 third_party += 1
 
     # ---- tier 2: live IPs with open ports from the active scan (inside declared ranges)
@@ -224,6 +231,11 @@ def main(work, max_ips):
                 f"  tags={','.join(r.get('tags', [])) or '-'}"
                 f"  vulns={len(r.get('vulns', []))}  via={r['source']}\n"
             )
+
+    # host→IP resolution map (owned IPs only) — lets the db link an IP back to its hostname(s)
+    with open(os.path.join(out_dir, "host_ip_map.txt"), "w", encoding="utf-8") as fh:
+        for h, ip in sorted(set(host_ip_pairs)):
+            fh.write(f"{h}\t{ip}\n")
 
     print(f"IPS={total}")
     print(f"QUERIED={queried}")

@@ -63,7 +63,7 @@ with apt. On non-Debian systems it tells you what to install by hand.
 | `kestrel retest [program]` | only what is new since the last scan | yes |
 | `kestrel secrets [program]` | GitHub leak hunting | OSINT |
 | `kestrel report [program]` | one HTML report from the data on disk | none |
-| `kestrel db <sub>` | SQLite index to cross-reference data across programs | none |
+| `kestrel db <sub>` | centralised store: recall any host, IP or path with all you found | none |
 
 The program name can be omitted: kestrel uses the last one you worked on. Every command has
 `kestrel <command> --help` for its own options.

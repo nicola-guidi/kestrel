@@ -4,17 +4,17 @@
 #
 #   kestrel new [program]        onboarding: scope, identification, rules (asked once)
 #   kestrel recon [program]      full recon pipeline
-#   kestrel status [program]     what the run produced, leads first
-#   kestrel verify [program]     scope QA: nothing out of scope touched
 #   kestrel ports [program]      active port scan on the declared in-scope IP ranges (if allowed)
 #   kestrel shodan [program]     passive Shodan InternetDB over the collected IPs (no traffic)
 #   kestrel wayback [program]    historical URLs from public archives (OSINT, no traffic)
-#   kestrel retest [program]     only what is new since the last scan
-#   kestrel secrets [program]    GitHub leak hunting
+#   kestrel secrets [program]    GitHub leak hunting (OSINT, no traffic)
 #   kestrel triage [program]     offline triage of the catch into leads (no traffic)
-#   kestrel info [program]       program settings and scope summary
+#   kestrel db <sub>             centralised store: recall any host, IP or path with all you found
 #   kestrel report [program]     build one HTML report from the data you have
-#   kestrel db <sub>             SQLite index to cross-reference data across programs
+#   kestrel status [program]     what the run produced, leads first
+#   kestrel verify [program]     scope QA: nothing out of scope touched
+#   kestrel retest [program]     only what is new since the last scan
+#   kestrel info [program]       program settings and scope summary
 #   kestrel scope [program]      view / edit the scope
 #   kestrel ls                   all programs
 #   kestrel doctor [--install]   is this machine ready

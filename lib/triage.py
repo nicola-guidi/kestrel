@@ -21,6 +21,7 @@ Writes recon/triage/:
   admin_panels.txt    admin/login/console surfaces
   code_hosts.txt      git/CI hosts (gitlab/jenkins/...)
   exposed_services.txt dashboards/brokers (grafana/kibana/rabbitmq/...)
+  shodan_ports.txt    IP -> open ports (+ CVE count) from passive Shodan (kestrel shodan)
   catchall.txt        catch-all hosts to keep OUT of the leads (reference)
 """
 import glob
@@ -279,6 +280,19 @@ def main(w):
         grep_lines(live, r"gitlab|gitea|jenkins|bitbucket|(^|[^a-z])git\."))
     counts["EXPOSED_SERVICES"] = write(os.path.join(out, "exposed_services.txt"),
         grep_lines(live, r"kibana|grafana|elastic|activemq|rabbitmq|consul|phpmyadmin|solr|kong|minio|airflow"))
+    # passive Shodan findings (third-party IPs are already excluded by kestrel shodan)
+    shodan_rows = []
+    for line in lines(os.path.join(w, "recon/ports/shodan.jsonl")):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        ip = d.get("ip", "")
+        ports = ",".join(str(p) for p in d.get("ports", []))
+        ncve = len(d.get("vulns", []))
+        if ip and ports:
+            shodan_rows.append(f"{ip}\t{ports}" + (f"\tCVEs={ncve}" if ncve else ""))
+    counts["SHODAN"] = write(os.path.join(out, "shodan_ports.txt"), shodan_rows)
     counts["CATCHALL"] = write(os.path.join(out, "catchall.txt"),
         lines(os.path.join(w, "recon/surface_catchall.txt")))
 

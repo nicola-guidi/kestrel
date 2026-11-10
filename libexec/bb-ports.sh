@@ -24,6 +24,11 @@
 #                                       # (recon/ip_targets.txt, written by bb-init) directly, no resolve;
 #                                       # recon/cidr_oos.txt is never touched (naabu -exclude-hosts)
 #   CIDR_FILE=my_ranges.txt ~/hunts/bb-ports.sh -y         # RANGE mode on a custom IP/CIDR list
+#   ~/hunts/bb-ports.sh --ranges -y          # auto-resumes an interrupted scan; --fresh = full rescan
+#
+# RESUME: a long scan can be interrupted (Ctrl-C) and re-run — it reuses the finished naabu
+# phase (checkpoint recon/ports/.naabu.done) and skips per-IP nmap files already completed.
+# Pass --fresh to wipe that state and rescan everything from scratch.
 #
 # Exit 0 = ran (or dry preview without -y). Exit >0 = a real problem.
 set -euo pipefail
@@ -109,11 +114,13 @@ FOOT
 # -y / --yes : confirm you are authorized to port-scan these hosts (required to send packets).
 YES=0
 RANGES=0
+FRESH=0
 _args=()
 for _a in "$@"; do
   case "$_a" in
     -y|--yes) YES=1 ;;
     --ranges) RANGES=1 ;;
+    --fresh)  FRESH=1 ;;
     *)        _args+=("$_a") ;;
   esac
 done
@@ -135,6 +142,15 @@ if [ -z "$WORK" ] || [ ! -d "$WORK" ]; then
 fi
 cd "$WORK"
 mkdir -p recon recon/ports recon/ports/nmap notes
+
+# RESUME: a long active scan can be interrupted and picked up later. The naabu phase writes a
+# checkpoint (.naabu.done) only when it finishes; a completed per-IP nmap file (ends in "Nmap
+# done") is reused instead of rescanned. --fresh wipes all of that and rescans from scratch.
+if [ "${FRESH:-0}" = 1 ]; then
+  rm -f recon/ports/.naabu.done recon/ports/naabu.txt recon/ports/ip_ports.txt recon/ports/services.txt
+  rm -f recon/ports/nmap/*.txt 2>/dev/null || true
+  log "fresh: cleared previous naabu/nmap results — full rescan"
+fi
 
 # ---------------------------------------------------------------- config
 : "${UA:=Mozilla/5.0}"
@@ -238,11 +254,19 @@ need naabu
 CDNFLAG=(); [ "$EXCLUDE_CDN" = 1 ] && CDNFLAG=(-exclude-cdn)
 [ -n "$EXCL" ] && CDNFLAG+=(-exclude-hosts "$EXCL")
 NAABU="recon/ports/naabu.txt"
-log "naabu: port scan over $NIP $([ "$MODE" = cidr ] && echo "range(s)/IP(s)" || echo "IP(s)") — $PORTS, rate $PORT_RATE pps${EXCLUDE_CDN:+ , exclude-cdn}"
-# shellcheck disable=SC2086  # $PORTS is an intentional multi-token flag spec
-naabu -list "$IPS" -rate "$PORT_RATE" $PORTS "${CDNFLAG[@]}" \
-  -silent -o "$NAABU" >>"$TOOLLOG" 2>&1 || true
-touch "$NAABU"
+if [ -f recon/ports/.naabu.done ] && [ -s "$NAABU" ]; then
+  ok "naabu: resuming — reusing $(wc -l < "$NAABU") open port(s) from a previous run (--fresh to rescan)"
+else
+  rm -f recon/ports/.naabu.done
+  log "naabu: port scan over $NIP $([ "$MODE" = cidr ] && echo "range(s)/IP(s)" || echo "IP(s)") — $PORTS, rate $PORT_RATE pps${EXCLUDE_CDN:+ , exclude-cdn}"
+  # shellcheck disable=SC2086  # $PORTS is an intentional multi-token flag spec
+  naabu -list "$IPS" -rate "$PORT_RATE" $PORTS "${CDNFLAG[@]}" \
+    -silent -o "$NAABU" >>"$TOOLLOG" 2>&1 || true
+  touch "$NAABU"
+  # Checkpoint the naabu phase ONLY now: a Ctrl-C mid-scan never reaches this line, so an
+  # interrupted naabu re-runs in full next time. Once it is done, nmap resumes per-IP below.
+  touch recon/ports/.naabu.done
+fi
 NOPEN=$(wc -l < "$NAABU")
 if [ "$NOPEN" -eq 0 ]; then
   log "naabu found 0 open ports. Done (nothing for nmap)."
@@ -260,19 +284,29 @@ awk -F: 'NF==2 { if ($1 in p) p[$1]=p[$1]","$2; else p[$1]=$2 } END{for(i in p) 
 # ================================================================ 3. service detection (nmap -sV)
 need nmap
 log "nmap -sV on $(wc -l < "$IPPORTS") IP(s), only the open ports (--max-rate $PORT_RATE). -Pn (naabu already proved them up)."
+# RESUME: a per-IP nmap file that ends in "Nmap done" is complete → reuse it, don't rescan.
+# services.txt is rebuilt from scratch every run (from the CURRENT ip_ports.txt), so skipping
+# finished IPs is idempotent and stale IPs from an old scope never linger.
 : > recon/ports/services.txt
-rm -f recon/ports/nmap/*.txt 2>/dev/null || true   # clear stale per-IP files from an earlier run
+_ndone=0; _nskip=0
 while read -r ip ports; do
   [ -z "$ip" ] && continue
-  sub "nmap → $ip ($ports)"
-  nmap -sV -Pn -T3 --max-rate "$PORT_RATE" -p "$ports" "$ip" \
-    -oN "recon/ports/nmap/${ip}.txt" -oG - >>"$TOOLLOG" 2>&1 || true
+  nf="recon/ports/nmap/${ip}.txt"
+  if [ -f "$nf" ] && grep -q "Nmap done" "$nf" 2>/dev/null; then
+    _nskip=$((_nskip+1)); sub "nmap → $ip (done earlier, skipping)"
+  else
+    sub "nmap → $ip ($ports)"
+    nmap -sV -Pn -T3 --max-rate "$PORT_RATE" -p "$ports" "$ip" \
+      -oN "$nf" -oG - >>"$TOOLLOG" 2>&1 || true
+    _ndone=$((_ndone+1))
+  fi
   # pull the readable "port  state  service  version" lines into one combined file
-  if [ -f "recon/ports/nmap/${ip}.txt" ]; then
-    awk -v ip="$ip" '/^[0-9]+\/(tcp|udp)/{printf "%-18s %s\n", ip, $0}' "recon/ports/nmap/${ip}.txt" \
+  if [ -f "$nf" ]; then
+    awk -v ip="$ip" '/^[0-9]+\/(tcp|udp)/{printf "%-18s %s\n", ip, $0}' "$nf" \
       >> recon/ports/services.txt || true
   fi
 done < "$IPPORTS"
+[ "$_nskip" -gt 0 ] && ok "nmap resume: $_nskip IP(s) reused from a previous run, $_ndone newly scanned (--fresh to redo all)"
 ok "service detection done → recon/ports/services.txt (per-IP detail in recon/ports/nmap/)"
 
 # ================================================================ 4. summary

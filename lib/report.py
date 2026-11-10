@@ -239,17 +239,6 @@ def section_ports(w, r, nav):
               f"they answered on an improbable number of ports (SYN-ACK / tcpwrapped on "
               f"everything), which is a filtering device, not real services — {listed}.</p>")
 
-    tp = []
-    for l in read_lines(os.path.join(w, "recon/ports/thirdparty.txt")):
-        parts = l.split("\t")
-        if len(parts) >= 3:
-            tp.append((f"<code>{esc(parts[0])}</code>", f"<code>{esc(parts[1])}</code>", f"<code>{esc(parts[2])}</code>"))
-    if tp:
-        r += f"<details><summary>third-party IPs skipped by the active scan — {len(tp)}</summary>"
-        r += "<p class=muted>In-scope hosts resolving to IPs the target does not own (SaaS/CDN). Not port-scanned.</p>"
-        r.table(["IP", "in-scope host", "reverse DNS"], tp)
-        r += "</details>"
-
 
 def section_secrets(w, r, nav):
     jsonl = os.path.join(w, "recon/secrets/th_all.jsonl")

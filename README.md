@@ -19,7 +19,8 @@ kestrel doctor --install     # is this machine ready? install what's missing
 kestrel new acme             # onboarding: scope, identity, rules (asked once)
 kestrel recon acme           # full recon pipeline
 kestrel status acme          # what it found, leads first
-kestrel ports acme           # passive Shodan + active scan on owned IPs only
+kestrel ports acme           # active port scan on the declared in-scope IP ranges only
+kestrel shodan acme          # passive Shodan InternetDB over the collected IPs (no traffic)
 kestrel triage acme          # offline triage of the catch into leads
 kestrel report acme          # one HTML report from whatever data exists
 ```
@@ -54,8 +55,9 @@ with apt. On non-Debian systems it tells you what to install by hand.
 | `kestrel recon [program] [stage]` | recon pipeline (full by default, resumable) | yes |
 | `kestrel status [program]` | what the run produced, leads first | none |
 | `kestrel verify [program]` | scope QA: nothing out of scope touched | none |
-| `kestrel ports [program]` | Shodan InternetDB (passive) + naabu/nmap on owned IPs only | passive / yes |
-| `kestrel triage [program]` | offline triage of recon/ports/js into leads | none |
+| `kestrel ports [program]` | active naabu/nmap on the declared in-scope IP ranges only | yes |
+| `kestrel shodan [program]` | passive Shodan InternetDB over the collected IPs | passive |
+| `kestrel triage [program]` | offline triage of recon/ports/shodan/js into leads | none |
 | `kestrel retest [program]` | only what is new since the last scan | yes |
 | `kestrel secrets [program]` | GitHub leak hunting | OSINT |
 | `kestrel report [program]` | one HTML report from the data on disk | none |
@@ -105,20 +107,24 @@ On screen it is one line per stage with the counts; everything else goes to
 `notes/recon.log` and the report. It stops cleanly if nothing is live, and ends with a scope
 verify (nothing out of scope touched, in-scope covered).
 
-## Ports: ownership gate, firewall guard, preview
+## Ports: declared ranges only, resume, firewall guard
 
-An in-scope hostname can resolve to an IP owned by a **third party** (a SaaS the target uses, a
-CDN). Web testing of the hostname is routed by Host header and is fine; port-scanning that IP
-hits the third party's infrastructure, which is outside almost every program's authorization.
+`kestrel ports` runs an **active** scan (naabu + nmap `-sV`, real packets) and nothing else — the
+passive layer moved to its own command (`kestrel shodan`). It is deliberately strict about what
+it touches:
 
-- **Passive first.** Shodan InternetDB on the in-scope IPs and the IPs that in-scope hosts
-  resolve to. Free, no key, zero packets to the target. Always runs.
-- **Ownership gate.** The active scan only touches IPs inside an in-scope range, or whose
-  Shodan hostname / reverse DNS is a scope domain. Everything else is written to
-  `recon/ports/thirdparty.txt` and skipped. `--include-third-party` overrides this only if you
-  are authorised.
-- **Preview and confirm.** Before scanning, the approved targets are listed and you confirm.
-  `-y` skips the prompt, `--dry-run` previews only, `--passive` stays passive.
+- **Declared IPs only.** The targets are exactly the in-scope IP ranges/IPs you entered at
+  onboarding, minus the out-of-scope ones (`recon/ip_targets.txt`). It does **not** resolve
+  in-scope hostnames to IPs and scan those: a host resolving to an IP (often a SaaS/CDN tagged
+  "Website Testing") does not authorise port-scanning that IP. If the program declares no IP
+  ranges, there is nothing to scan here.
+- **Preview and confirm.** Before scanning, the declared targets are listed and you confirm.
+  `-y` skips the prompt, `--dry-run` previews only.
+- **Resume.** A long scan can be interrupted and re-run: the finished naabu phase is reused and
+  per-IP nmap results already collected are skipped. `--fresh` starts over.
+- **Curated range ports.** In range mode it scans a curated set of ports where an exposed
+  service is itself a likely finding (unauth DB/cache, admin panels, remote access, k8s/Docker
+  APIs, NFS/rsync, alt-HTTP), not a blind top-100.
 - **Firewall guard.** A host that answers on an improbable number of ports is a filtering
   device (SYN-ACK / tcpwrapped on everything), not real services. Those IPs are flagged in
   `recon/ports/firewalled.txt` and kept out of the report's service table.
@@ -126,13 +132,24 @@ hits the third party's infrastructure, which is outside almost every program's a
 Active scanning runs only if the program allows it (answered at onboarding) and requires root
 for a SYN scan; without root, naabu/nmap fall back to a slower connect scan.
 
+## Shodan (passive)
+
+`kestrel shodan` is a separate, passive step — Shodan's free InternetDB, **zero packets to the
+target**. It runs over everything recon collected, in priority order so the free-API budget hits
+live assets first: IPs the in-scope hosts resolve to, then live IPs with open ports from
+`kestrel ports`, then a distributed sample across the declared ranges. **Third-party IPs are
+excluded entirely** — an IP a host resolves to that the target does not own (not in a declared
+range, reverse DNS not a scope domain) is never queried and never written, only counted.
+Out-of-scope IPs are never touched. `--max <n>` raises the query cap (default 4096). Results land
+in `recon/ports/shodan.*` and feed triage and the report.
+
 ## Triage (offline)
 
-`kestrel triage` is a pure offline pass over what recon, ports and JS already collected — zero
-network. It sorts the catch into lead files under `recon/triage/`, leads first:
+`kestrel triage` is a pure offline pass over what recon, ports, shodan and JS already collected
+— zero network. It sorts the catch into lead files under `recon/triage/`, leads first:
 
 - open JSON 200 endpoints, sensitive paths answering 200, admin / login surfaces, exposed
-  dashboards and brokers, git / CI hosts;
+  dashboards and brokers, git / CI hosts, IPs with open ports from passive Shodan;
 - then the surface: APIs behind 401/403, paths mined from JS bundles, paths from robots /
   sitemap, interesting crawl URLs, a parameter-name wordlist for fuzzing, real UUIDs.
 

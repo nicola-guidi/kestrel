@@ -1,30 +1,29 @@
 # shellcheck shell=bash
-# kestrel ports [program] — port & service intel.
+# kestrel ports [program] — active port & service scan.
 #
-#   1. passive: Shodan InternetDB on in-scope IPs + IPs of resolving in-scope hosts.
-#      Free, no key, ZERO packets to the target. Always runs.
-#   2. active: naabu + nmap -sV (engine bb-ports), ONLY if the program allows port scanning
-#      (answered at onboarding). Host mode on resolved hosts, then range mode on the
-#      in-scope IP ranges if the scope has any.
+#   ACTIVE scan (naabu + nmap -sV, real packets), ONLY if the program allows port scanning
+#   (answered at onboarding). Targets are EXACTLY the in-scope IP ranges/IPs you declared at
+#   onboarding, minus the out-of-scope ones (recon/ip_targets.txt). It does NOT resolve in-scope
+#   hostnames to IPs and scan those — a host resolving to some IP does not authorise scanning
+#   that IP. If the program declares no IP ranges, there is nothing to scan here.
 #
-#   Ownership gate: the active scan only touches IPs inside an in-scope range or whose PTR is a
-#   scope domain; IPs that in-scope hosts resolve to but that belong to third parties (SaaS/CDN)
-#   are listed and skipped. Before scanning, the approved targets are previewed and confirmed.
+#   Passive intel (Shodan InternetDB, zero packets) is a separate step:  kestrel shodan
 #
-#   --passive               only step 1 (Shodan), even if active scanning is allowed
-#   -n, --dry-run           preview the approved targets only, never scan
-#   -y, --yes               skip the confirmation prompt and scan the approved targets
-#   --include-third-party   scan third-party IPs too (only if you are authorised to)
+#   -n, --dry-run   preview the approved targets only, never scan
+#   -y, --yes       skip the confirmation prompt and scan
+#   --fresh         ignore a previous run's progress and rescan everything from scratch
+#
+#   An interrupted scan resumes automatically on the next run: the finished naabu phase is
+#   reused and per-IP nmap results already collected are skipped. Use --fresh to start over.
 
 cmd_ports() {
-  local prog="" passive_only=0 include_third=0 assume_yes=0 dry_run=0 a
+  local prog="" assume_yes=0 dry_run=0 fresh=0 a
   for a in "$@"; do
     case "$a" in
       -h|--help) sed -n '2,17p' "$KESTREL_ROOT/cmd/ports.sh" | sed 's/^# \{0,1\}//' >&2; return 0 ;;
-      --passive) passive_only=1 ;;
-      --include-third-party) include_third=1 ;;
       -y|--yes) assume_yes=1 ;;
       -n|--dry-run) dry_run=1 ;;
+      --fresh) fresh=1 ;;
       -*) ui_die "unknown option '$a'" "kestrel ports --help" ;;
       *) prog="$a" ;;
     esac
@@ -32,102 +31,60 @@ cmd_ports() {
   prog="$(resolve_program "$prog")"
   load_program "$prog"
   ui_header ports "$prog"
-  have python3 || ui_die "python3 is required" "kestrel doctor --install"
 
   local t0; t0=$(date +%s)
-  local has_hosts=0 has_ranges=0
-  [ -s recon/resolved.txt ] || [ -s recon/hosts.txt ] && has_hosts=1
-  [ -s recon/ip_targets.txt ] && has_ranges=1
-  if [ "$has_hosts" -eq 0 ] && [ "$has_ranges" -eq 0 ]; then
-    ui_die "nothing to look at yet: no resolved hosts and no IP ranges" "kestrel recon $prog"
-  fi
-  [ "$has_hosts" -eq 0 ] && [ -n "$(cat recon/apex.txt 2>/dev/null)" ] && \
-    ui_warn hosts "recon not run yet: only IP ranges will be checked"
-
-  # ---------------------------------------------------------------- 1 · passive
-  ui_section "passive · Shodan InternetDB (no traffic to the target)"
-  local out="" idb_code
-  idb_code="$(shodan_probe)"
-  case "$idb_code" in
-    200|404) out="$(python3 "$KESTREL_ROOT/lib/shodan_idb.py" "$WORK")" || ui_warn shodan "lookup failed" ;;
-    *)       ui_warn shodan "InternetDB unreachable (${idb_code:-no answer}) — passive layer skipped" ;;
-  esac
-  local SH_IPS SH_QUERIED SH_KNOWN SH_PORTS SH_VULNS SH_SKIPPED_OOS SH_CAPPED SH_ERRORS
-  eval "$(printf '%s\n' "$out" | sed 's/^\([A-Z0-9_]*\)=\(.*\)$/SH_\1=\x27\2\x27/')"
-  if [ -z "$out" ]; then :
-  elif [ "${SH_KNOWN:-0}" -gt 0 ]; then
-    ui_ok shodan "${SH_KNOWN} of ${SH_QUERIED} IPs known · ${SH_PORTS} open ports · ${SH_VULNS} CVEs"
-    sed 's/^/                 /' recon/ports/shodan.txt | head -n 10 >&2
-    [ "$(count_lines recon/ports/shodan.txt)" -gt 10 ] && ui_dim "               … $(( $(count_lines recon/ports/shodan.txt) - 10 )) more in recon/ports/shodan.txt"
-  else
-    ui_info shodan "nothing known for ${SH_QUERIED:-0} IPs"
-  fi
-  [ "${SH_SKIPPED_OOS:-0}" -gt 0 ] && ui_ok scope "${SH_SKIPPED_OOS} out-of-scope IPs skipped"
-  [ "${SH_CAPPED:-0}" -gt 0 ]      && ui_warn capped "${SH_CAPPED} IPs over the 4096 cap not checked"
-  [ "${SH_ERRORS:-0}" -gt 0 ]      && ui_warn errors "${SH_ERRORS} lookups failed (network / rate limit)"
-
-  # ---------------------------------------------------------------- 2 · active
   ui_section "active · naabu + nmap"
-  if [ "$passive_only" -eq 1 ]; then
-    ui_info active "skipped (--passive)"
-  elif [ "${PORTSCAN_ALLOWED:-n}" != y ]; then
-    ui_warn active "not allowed by the program: passive only"
-  else
-    local rc=0
-    : > notes/ports.log
-
-    # OWNERSHIP GATE: an in-scope host can resolve to a THIRD-PARTY IP (SaaS/CDN). Port-scanning
-    # that IP hits someone else's infra. Scan ONLY IPs that are inside an in-scope range or whose
-    # PTR is a scope domain. The rest are listed and skipped (unless --include-third-party).
-    ui_running ownership "resolving in-scope hosts, checking IP ownership…"
-    local ores; ores="$(python3 "$KESTREL_ROOT/lib/ownership.py" "$WORK" 2>/dev/null)" || true
-    local OWNED THIRDPARTY
-    eval "$(printf '%s\n' "$ores" | sed 's/^\([A-Z0-9_]*\)=\(.*\)$/\1=\x27\2\x27/')"
-    if [ "${THIRDPARTY:-0}" -gt 0 ] && [ "$include_third" -eq 0 ]; then
-      ui_warn third-party "${THIRDPARTY} IP(s) belong to third parties (SaaS/CDN) — NOT scanned · recon/ports/thirdparty.txt"
-      sed 's/^/                 /' recon/ports/thirdparty.txt | head -n 6 >&2
-    elif [ "${THIRDPARTY:-0}" -gt 0 ]; then
-      ui_warn third-party "${THIRDPARTY} third-party IP(s) scanned anyway (--include-third-party) — make sure you are authorised"
-      cut -f1 recon/ports/thirdparty.txt >> recon/ports/owned_ips.txt
-    fi
-
-    # build the approved IP list: owned resolved IPs + declared in-scope ranges
-    local scanfile=recon/ports/scan_targets.txt
-    { cat recon/ports/owned_ips.txt 2>/dev/null; [ -s recon/ip_targets.txt ] && cat recon/ip_targets.txt; } | sort -u > "$scanfile"
-    local ntargets; ntargets="$(count_lines "$scanfile")"
-    if [ ! -s "$scanfile" ]; then
-      ui_warn active "no in-scope-owned IP to scan (all resolved IPs are third-party)"
-    else
-      # PREVIEW: show exactly what will be scanned, then require confirmation (-y skips it).
-      ui_ok preview "${ntargets} approved target(s) that WILL be scanned · recon/ports/scan_targets.txt"
-      sed 's/^/                 /' "$scanfile" | head -n 20 >&2
-      [ "$ntargets" -gt 20 ] && ui_dim "               … $(( ntargets - 20 )) more in recon/ports/scan_targets.txt"
-      if [ "$dry_run" -eq 1 ]; then
-        ui_info active "dry run: nothing scanned (re-run with -y to launch)"
-      elif [ "$assume_yes" -eq 0 ] && ! ui_yesno "Launch the active scan on ${ntargets} target(s)?" n; then
-        ui_info active "skipped: not confirmed (re-run with -y to launch, or --dry-run to only preview)"
-      else
-        ui_running active "naabu + nmap on ${ntargets} approved target(s)…"
-        CIDR_FILE="$WORK/$scanfile" PORTS="${PORTS:--top-ports 100}" \
-          TOOLLOG="$WORK/notes/tools.log" bash "$KESTREL_ROOT/libexec/bb-ports.sh" --ranges -y >> notes/ports.log 2>&1 || rc=1
-        ui_ok active "$(count_lines recon/ports/naabu.txt) open ports · $(count_lines recon/ports/services.txt) services on ${ntargets} owned target(s)"
-        # FIREWALL GUARD: a host that answers on an improbable number of ports is a filtering
-        # device (SYN-ACK / tcpwrapped on everything), not real services. Flag it so the count
-        # above isn't mistaken for genuine open ports.
-        awk -F: 'NF==2{c[$1]++} END{for(i in c) if(c[i]>=FW) print i"\t"c[i]}' FW="${FW_PORT_THRESHOLD:-30}" \
-          recon/ports/naabu.txt 2>/dev/null | sort -V > recon/ports/firewalled.txt
-        local nfw; nfw="$(count_lines recon/ports/firewalled.txt)"
-        [ "$nfw" -gt 0 ] && ui_warn firewalled "${nfw} IP(s) answer on ≥${FW_PORT_THRESHOLD:-30} ports — likely a firewall, not real services · recon/ports/firewalled.txt"
-      fi
-    fi
-    [ "${OWNED:-0}" -gt 0 ] && ui_info owned "${OWNED} IP(s) resolved from in-scope hosts, inside scope"
-    if [ "$rc" -ne 0 ]; then ui_warn active "finished with issues · notes/ports.log"; fi
-    [ -s recon/ports/services.txt ] && ui_info services "recon/ports/services.txt"
+  if [ "${PORTSCAN_ALLOWED:-n}" != y ]; then
+    ui_warn active "not allowed by the program — skipped"
+    ui_info passive "for passive port intel without traffic:  kestrel shodan $prog"
+    ui_blank; return 0
   fi
+  if [ ! -s recon/ip_targets.txt ]; then
+    ui_warn active "the program declares no in-scope IP ranges — nothing to port-scan"
+    ui_info passive "for passive port intel without traffic:  kestrel shodan $prog"
+    ui_blank; return 0
+  fi
+
+  local rc=0
+  : > notes/ports.log
+
+  # Targets = EXACTLY the declared in-scope ranges/IPs (already net of out-of-scope). No host
+  # resolution, no ownership guessing: only what the program authorises for Network testing.
+  local scanfile=recon/ports/scan_targets.txt
+  mkdir -p recon/ports
+  sort -u recon/ip_targets.txt > "$scanfile"
+  local ntargets; ntargets="$(count_lines "$scanfile")"
+
+  # PREVIEW: show exactly what will be scanned, then require confirmation (-y skips it).
+  ui_ok preview "${ntargets} declared in-scope range(s)/IP(s) that WILL be scanned · recon/ports/scan_targets.txt"
+  sed 's/^/                 /' "$scanfile" | head -n 20 >&2
+  [ "$ntargets" -gt 20 ] && ui_dim "               … $(( ntargets - 20 )) more in recon/ports/scan_targets.txt"
+
+  if [ "$dry_run" -eq 1 ]; then
+    ui_info active "dry run: nothing scanned (re-run with -y to launch)"
+  elif [ "$assume_yes" -eq 0 ] && ! ui_yesno "Launch the active scan on ${ntargets} declared target(s)?" n; then
+    ui_info active "skipped: not confirmed (re-run with -y to launch, or --dry-run to only preview)"
+  else
+    ui_running active "naabu + nmap on ${ntargets} declared target(s)…"
+    local _fresh=(); [ "$fresh" -eq 1 ] && _fresh=(--fresh)
+    # PORTS left to bb-ports' RANGE_PORTS_DEFAULT (curated range ports) unless the user exported one.
+    CIDR_FILE="$WORK/$scanfile" PORTS="${PORTS:-}" \
+      TOOLLOG="$WORK/notes/tools.log" bash "$KESTREL_ROOT/libexec/bb-ports.sh" --ranges "${_fresh[@]}" -y >> notes/ports.log 2>&1 || rc=1
+    ui_ok active "$(count_lines recon/ports/naabu.txt) open ports · $(count_lines recon/ports/services.txt) services on ${ntargets} declared target(s)"
+    # FIREWALL GUARD: a host that answers on an improbable number of ports is a filtering
+    # device (SYN-ACK / tcpwrapped on everything), not real services. Flag it so the count
+    # above isn't mistaken for genuine open ports.
+    awk -F: 'NF==2{c[$1]++} END{for(i in c) if(c[i]>=FW) print i"\t"c[i]}' FW="${FW_PORT_THRESHOLD:-30}" \
+      recon/ports/naabu.txt 2>/dev/null | sort -V > recon/ports/firewalled.txt
+    local nfw; nfw="$(count_lines recon/ports/firewalled.txt)"
+    [ "$nfw" -gt 0 ] && ui_warn firewalled "${nfw} IP(s) answer on ≥${FW_PORT_THRESHOLD:-30} ports — likely a firewall, not real services · recon/ports/firewalled.txt"
+  fi
+  if [ "$rc" -ne 0 ]; then ui_warn active "finished with issues · notes/ports.log"; fi
+  [ -s recon/ports/services.txt ] && ui_info services "recon/ports/services.txt"
 
   ui_blank
   ui_ok done "$(ui_elapsed $(( $(date +%s) - t0 ))) · results in recon/ports/"
-  ui_next "kestrel status $prog"
+  ui_next "kestrel shodan $prog   ·   kestrel triage $prog"
   ui_blank
 }
 

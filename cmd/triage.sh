@@ -27,7 +27,7 @@ cmd_triage() {
   local out; out="$(python3 "$KESTREL_ROOT/lib/triage.py" "$WORK" 2>/dev/null)" || ui_die "triage failed"
   local T_API_OPEN T_API_GATED T_API_PATHS T_FUZZ_REAL T_FUZZ_JUICY T_JS_ENDPOINTS \
         T_JS_SECRETS T_JS_UUIDS T_JS_URLS T_PARAMS T_ROBOTS_NONSTD T_ADMIN_PANELS T_CODE_HOSTS \
-        T_EXPOSED_SERVICES T_CATCHALL
+        T_EXPOSED_SERVICES T_SHODAN T_CATCHALL
   eval "$(printf '%s\n' "$out" | sed 's/^\([A-Z0-9_]*\)=\(.*\)$/T_\1=\x27\2\x27/')"
 
   ui_section "leads (look first)"
@@ -37,6 +37,7 @@ cmd_triage() {
   _tri_line ok  admin      "${T_ADMIN_PANELS:-0}" "admin/login surface(s)"             recon/triage/admin_panels.txt
   _tri_line ok  services   "${T_EXPOSED_SERVICES:-0}" "exposed dashboard/broker(s)"    recon/triage/exposed_services.txt
   _tri_line ok  code-hosts "${T_CODE_HOSTS:-0}" "git/CI host(s)"                       recon/triage/code_hosts.txt
+  _tri_line ok  shodan     "${T_SHODAN:-0}"   "IP(s) with open ports (passive Shodan)" recon/triage/shodan_ports.txt
 
   ui_section surface
   _tri_line info api-gated  "${T_API_GATED:-0}"  "API path(s) behind 401/403"          recon/triage/api_gated.txt

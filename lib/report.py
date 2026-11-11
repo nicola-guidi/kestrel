@@ -381,30 +381,6 @@ def section_wayback(w, r, nav):
         r += "</details>"
 
 
-def section_snapshots(w, r, nav):
-    base = os.path.join(w, "recon/snapshots")
-    index = os.path.join(base, "index.html")
-    pngs = sorted(glob.glob(os.path.join(base, "**", "*.png"), recursive=True))
-    if not os.path.isfile(index) or not pngs:
-        return
-    nav.append(("snapshots", "Snapshots"))
-    r += "<h2 id=snapshots>Snapshots</h2>"
-    r += ("<p><span class='pill pass'>visual</span> "
-          f"{len(pngs)} screenshot(s) of the live pages — "
-          "<a href='recon/snapshots/index.html'>open the full gallery</a>. "
-          "Candidates, not proof: verify by hand.</p>")
-    r += "<div style='display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px'>"
-    for p in pngs[:12]:
-        rel = os.path.relpath(p, w)
-        r += ("<a href='recon/snapshots/index.html' "
-              "style='display:block;border:1px solid #21262d;border-radius:8px;overflow:hidden'>"
-              f"<img loading=lazy src='{esc(rel)}' "
-              "style='width:100%;height:120px;object-fit:cover;object-position:top;display:block'></a>")
-    r += "</div>"
-    if len(pngs) > 12:
-        r += f"<p class=dim>… {len(pngs) - 12} more in the gallery</p>"
-
-
 def section_retest(w, r, nav):
     runs = sorted(glob.glob(os.path.join(w, "recon/retest/2*")), reverse=True)
     runs = [d for d in runs if os.path.isdir(d)]
@@ -489,7 +465,6 @@ def main(w, out):
     section_fuzz(w, body, nav_items)
     section_ports(w, body, nav_items)
     section_js(w, body, nav_items)
-    section_snapshots(w, body, nav_items)
     section_wayback(w, body, nav_items)
     section_secrets(w, body, nav_items)
     section_retest(w, body, nav_items)

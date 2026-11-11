@@ -1,19 +1,28 @@
 # shellcheck shell=bash
-# kestrel snapshot [program] — a visual preview of the live pages. Screenshots every live host
-# kestrel found (headless browser via httpx -screenshot) into a gallery you can skim to see at a
-# glance what each page is: login, admin panel, default page, error, real app.
+# kestrel snapshot [program] — a visual preview of the pages that matter. An EXTRA, not a pipeline
+# stage: it screenshots pages (headless browser via httpx -screenshot) into a gallery you can skim
+# to see at a glance what each page is — login, admin panel, default page, error, real app. Run it
+# whenever you want "a bit more info"; it feeds nothing else (not the report, not triage, not the
+# db) and nothing depends on it.
 #
-# Only the live hosts already found (recon/live.txt) — in scope, no new hosts. Active traffic
-# (it loads the pages), so it honours the program's rate and identity, and is proxy-aware.
+# By default it shoots only the TRIAGE LEADS — the pages triage already flagged as interesting
+# (admin panels, open APIs, exposed services, juicy fuzz hits, odd robots entries, interesting
+# wayback URLs) — so you get a handful of pages that count, not thousands. Use --live to screenshot
+# every live host instead.
 #
-#   kestrel snapshot [program] [--surface] [--proxy[=url]] [--no-proxy]
-#     --surface   screenshot the wider surface (recon/surface_ok.txt) instead of just live hosts
+# In scope only (the URLs come from kestrel's own scoped recon/triage). Active traffic (it loads the
+# pages), so it honours the program's rate and identity, and is proxy-aware.
+#
+#   kestrel snapshot [program] [--live] [--surface] [--proxy[=url]] [--no-proxy]
+#     --live      screenshot every live host (recon/live.txt) instead of just the triage leads
+#     --surface   screenshot the wider surface (recon/surface_ok.txt) instead
 
 cmd_snapshot() {
-  local prog="" proxy_want=auto src=live a
+  local prog="" proxy_want=auto src=leads a
   for a in "$@"; do
     case "$a" in
-      -h|--help) sed -n '2,11p' "$KESTREL_ROOT/cmd/snapshot.sh" | sed 's/^# \{0,1\}//' >&2; return 0 ;;
+      -h|--help) sed -n '2,17p' "$KESTREL_ROOT/cmd/snapshot.sh" | sed 's/^# \{0,1\}//' >&2; return 0 ;;
+      --live)     src=live ;;
       --surface)  src=surface ;;
       --proxy)    proxy_want=on ;;
       --proxy=*)  proxy_want=on; PROXY_URL="${a#--proxy=}" ;;
@@ -28,14 +37,35 @@ cmd_snapshot() {
   tool_ok httpx || ui_die "httpx missing" "kestrel doctor --install"
   have python3 || ui_die "python3 is required" "kestrel doctor --install"
 
-  local srcfile=recon/live.txt
-  [ "$src" = surface ] && srcfile=recon/surface_ok.txt
-  [ -s "$srcfile" ] || ui_die "no ${src} hosts yet to screenshot" "kestrel recon $prog"
-
+  # ---- gather the URLs to screenshot, by source, dedup
   local urls; urls="$(mktemp)"
-  awk '{print $1}' "$srcfile" | grep -E '^https?://' | sort -u > "$urls"
+  case "$src" in
+    leads)
+      # the pages triage flagged as worth a look — on-target HTTP endpoints only
+      local f
+      for f in admin_panels api_open exposed_services fuzz_juicy robots_nonstd wayback_interesting; do
+        [ -s "recon/triage/$f.txt" ] && awk '{print $1}' "recon/triage/$f.txt"
+      done 2>/dev/null | grep -E '^https?://' | sort -u > "$urls" || true
+      if [ ! -s "$urls" ]; then
+        rm -f "$urls"
+        ui_warn empty "no triage leads yet to screenshot"
+        ui_next "kestrel triage $prog   (or shoot every live host: kestrel snapshot $prog --live)"
+        ui_blank; return 0
+      fi ;;
+    live)
+      [ -s recon/live.txt ] || ui_die "no live hosts yet to screenshot" "kestrel recon $prog"
+      awk '{print $1}' recon/live.txt | grep -E '^https?://' | sort -u > "$urls" ;;
+    surface)
+      [ -s recon/surface_ok.txt ] || ui_die "no surface yet to screenshot" "kestrel recon $prog"
+      awk '{print $1}' recon/surface_ok.txt | grep -E '^https?://' | sort -u > "$urls" ;;
+  esac
   local n; n="$(count_lines "$urls")"
-  if [ "$n" -eq 0 ]; then rm -f "$urls"; ui_die "no URLs to screenshot in $srcfile"; fi
+  if [ "$n" -eq 0 ]; then rm -f "$urls"; ui_die "no URLs to screenshot"; fi
+  case "$src" in
+    leads)   ui_info source "$n triage lead(s) — the pages worth a look (use --live for every host)" ;;
+    live)    ui_info source "$n live host(s)" ;;
+    surface) ui_info source "$n surface URL(s)" ;;
+  esac
 
   # a local Chrome makes httpx reuse it instead of downloading its own copy
   local chrome; chrome="$(chrome_bin)"
@@ -57,7 +87,7 @@ cmd_snapshot() {
 
   local out_dir="recon/snapshots"; mkdir -p "$out_dir"
   local t0; t0=$(date +%s)
-  ui_running snapshot "screenshotting $n live page(s) with a headless browser (rl $RATE)…"
+  ui_running snapshot "screenshotting $n page(s) with a headless browser (rl $RATE)…"
   # -ss screenshot · -esb keep the PNGs out of the JSON · -srd stores responses+screenshots ·
   # -json/-o gives us url+status+title+path to build the gallery · rate from the program
   httpx -l "$urls" "${hdrs[@]}" ${px[@]+"${px[@]}"} "${chrome_flag[@]}" \
@@ -74,8 +104,7 @@ cmd_snapshot() {
   ui_blank
   if [ "${SN_SHOTS:-0}" -gt 0 ]; then
     ui_ok snapshot "${SN_SHOTS} screenshot(s) · $out_dir/index.html"
-    ui_ok done "$(ui_elapsed $(( $(date +%s) - t0 ))) · open $out_dir/index.html"
-    ui_next "kestrel report $prog   (the gallery is linked in the report)"
+    ui_ok done "$(ui_elapsed $(( $(date +%s) - t0 ))) · open $out_dir/index.html in a browser"
   else
     ui_warn snapshot "no screenshot produced — see notes/tools.log (Chrome present? pages reachable?)"
   fi

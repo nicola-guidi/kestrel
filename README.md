@@ -288,21 +288,28 @@ check the first import once.
 
 ## Snapshots (visual recon)
 
-`kestrel snapshot` screenshots every live page kestrel found and builds a gallery you skim to see at
-a glance what each host is — login, admin panel, default page, error, real app. It drives
-`httpx -screenshot` (headless browser), so it reuses a tool you already have; the only extra is a
-local **Chromium** (`doctor` lists it as optional, installs it with apt). Screenshots are taken only of
-the live hosts (`recon/live.txt`) — in scope, no new hosts. It is active traffic (it loads the pages),
-so it honours the program's **rate** and identity, and is **proxy-aware** (`--proxy` sends the
-screenshot requests through Burp/Caido too).
+`kestrel snapshot` screenshots the pages that matter and builds a gallery you skim to see at a
+glance what each one is — login, admin panel, default page, error, real app. It is an **extra, not a
+pipeline stage**: run it whenever you want a bit more info. It feeds nothing else (not the report,
+not triage, not the db) and nothing depends on it. It drives `httpx -screenshot` (headless browser),
+so it reuses a tool you already have; the only extra is a local **Chromium** (`doctor` lists it as
+optional, installs it with apt). It is active traffic (it loads the pages), so it honours the
+program's **rate** and identity, and is **proxy-aware** (`--proxy` sends the screenshot requests
+through Burp/Caido too).
+
+By default it shoots only the **triage leads** — the pages triage already flagged as interesting
+(admin panels, open APIs, exposed services, juicy fuzz hits, odd robots entries, interesting wayback
+URLs) — so you get a handful of pages that count, not thousands. Run `kestrel triage` first so the
+leads exist. Use `--live` to screenshot every live host instead.
 
 ```
-kestrel snapshot acme             # screenshot the live hosts
+kestrel snapshot acme             # just the triage leads (the pages worth a look)
+kestrel snapshot acme --live      # every live host (can be a lot)
 kestrel snapshot acme --surface   # the wider surface (recon/surface_ok.txt) instead
 ```
 
 Output lands in `recon/snapshots/`: the PNGs plus `index.html`, a filterable grid with status and
-title per host. The gallery is also linked into `kestrel report`. Screenshots are candidates, not
+title per host — open it in a browser. Screenshots are candidates, not
 proof — verify a page by hand before acting on it.
 
 ## Scheduling

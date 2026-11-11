@@ -66,6 +66,8 @@ with apt. On non-Debian systems it tells you what to install by hand.
 | `kestrel db <sub>` | centralised store: recall any host, IP or path with all you found | none |
 | `kestrel export [program]` | export the scope to Burp Suite / Caido | none |
 | `kestrel replay [program]` | re-send the discovered surface through Burp/Caido | yes (proxy) |
+| `kestrel snapshot [program]` | screenshot the live pages into a visual gallery | yes |
+| `kestrel schedule [program]` | run retest automatically on a schedule (systemd/cron) | none |
 
 The program name can be omitted: kestrel uses the last one you worked on. Every command has
 `kestrel <command> --help` for its own options.
@@ -283,6 +285,43 @@ wildcards include their subdomains, out-of-scope hosts/keywords become exclusion
 pattern can (single IPs and /8, /16, /24); anything else is listed so you can add it by hand, and Caido
 globs can't express CIDR at all (Burp handles those). The import formats shift between tool versions, so
 check the first import once.
+
+## Snapshots (visual recon)
+
+`kestrel snapshot` screenshots every live page kestrel found and builds a gallery you skim to see at
+a glance what each host is — login, admin panel, default page, error, real app. It drives
+`httpx -screenshot` (headless browser), so it reuses a tool you already have; the only extra is a
+local **Chromium** (`doctor` lists it as optional, installs it with apt). Screenshots are taken only of
+the live hosts (`recon/live.txt`) — in scope, no new hosts. It is active traffic (it loads the pages),
+so it honours the program's **rate** and identity, and is **proxy-aware** (`--proxy` sends the
+screenshot requests through Burp/Caido too).
+
+```
+kestrel snapshot acme             # screenshot the live hosts
+kestrel snapshot acme --surface   # the wider surface (recon/surface_ok.txt) instead
+```
+
+Output lands in `recon/snapshots/`: the PNGs plus `index.html`, a filterable grid with status and
+title per host. The gallery is also linked into `kestrel report`. Screenshots are candidates, not
+proof — verify a page by hand before acting on it.
+
+## Scheduling
+
+`kestrel schedule` runs `kestrel retest <program>` automatically on a cadence, so new live subdomains
+surface (and, if notifications are configured, ping you) without you remembering to look.
+
+```
+kestrel schedule acme daily --at 03:00    # or weekly / monthly
+kestrel schedule --list                   # what is scheduled
+kestrel schedule acme --remove            # stop
+```
+
+It prefers a **systemd user timer** with `Persistent=true` — a run missed because the machine was off
+is caught up at the next boot — and falls back to **crontab** where systemd isn't available. Either
+way it runs **on your machine**, so the machine must be powered on at that time: cron skips a missed
+run, systemd catches it up, and for true 24/7 coverage you want an always-on host (a small VPS, a home
+server, a Pi). A systemd user timer only fires while you're logged in unless you enable lingering
+(`loginctl enable-linger <user>`), which `schedule` reminds you about.
 
 ## Retest
 

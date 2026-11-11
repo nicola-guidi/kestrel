@@ -153,6 +153,16 @@ write_legacy_env() {
 # have <tool> — is it on PATH
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# chrome_bin — path of a usable Chrome/Chromium (for httpx -system-chrome screenshots), else empty
+chrome_bin() {
+  local b
+  for b in chromium chromium-browser google-chrome google-chrome-stable chrome; do
+    command -v "$b" 2>/dev/null && return 0
+  done
+  return 0
+}
+chrome_ok() { [ -n "$(chrome_bin)" ]; }
+
 # ---- intercepting proxy (Burp / Caido) ------------------------------------
 # proxy_default_url — the proxy configured for this program (PROXY_URL in kestrel.conf),
 # else the conventional Burp/Caido default on localhost:8080.

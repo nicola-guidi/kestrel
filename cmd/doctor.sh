@@ -30,8 +30,9 @@ DOCTOR_TOOLS=(
   "trufflehog|secrets|core|script:trufflehog"
   "gitleaks|secrets|opt|go:github.com/zricethezav/gitleaks/v8@latest"
   "gau|osint|opt|go:github.com/lc/gau/v2/cmd/gau@latest"
+  "chromium|snapshot|opt|apt:chromium"
 )
-DOCTOR_GROUPS=(core recon ports secrets osint)
+DOCTOR_GROUPS=(core recon ports secrets osint snapshot)
 
 # shodan_probe → HTTP code of one InternetDB lookup of a neutral public IP (never a target)
 shodan_probe() {
@@ -49,6 +50,9 @@ go_minor() {
 # tool_ok <name> → present AND the right tool (Kali's 'httpx' can be the python client)
 tool_ok() {
   local t="$1"
+  # chromium is needed only for 'kestrel snapshot' and ships under several binary names
+  # (chromium, chromium-browser, google-chrome): any of them counts.
+  [ "$t" = chromium ] && { chrome_ok; return; }
   have "$t" || return 1
   case "$t" in
     httpx) httpx -version 2>&1 | grep -qi projectdiscovery || return 1 ;;

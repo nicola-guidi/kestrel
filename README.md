@@ -64,6 +64,8 @@ with apt. On non-Debian systems it tells you what to install by hand.
 | `kestrel secrets [program]` | GitHub leak hunting | OSINT |
 | `kestrel report [program]` | one HTML report from the data on disk | none |
 | `kestrel db <sub>` | centralised store: recall any host, IP or path with all you found | none |
+| `kestrel export [program]` | export the scope to Burp Suite / Caido | none |
+| `kestrel replay [program]` | re-send the discovered surface through Burp/Caido | yes (proxy) |
 
 The program name can be omitted: kestrel uses the last one you worked on. Every command has
 `kestrel <command> --help` for its own options.
@@ -72,8 +74,8 @@ The program name can be omitted: kestrel uses the last one you worked on. Every 
 
 `kestrel new` asks, once: name, platform, program URL, User-Agent suffix, custom header(s),
 hosts and wildcards in / out of scope, IPs and ranges in / out of scope, paths out of scope,
-wordlist, rate limit, program rules, whether port scanning is allowed, and whether to run recon
-now.
+wordlist, rate limit, program rules, whether port scanning is allowed, whether to route traffic
+through an intercepting proxy (Burp/Caido) by default, and whether to run recon now.
 
 Scope blocks can be **pasted straight from the program page**: kestrel extracts hosts,
 wildcards, URLs and IP ranges and ignores the rest (and shows what it ignored). Out-of-scope IP
@@ -238,13 +240,57 @@ or query across all of them.
 `-S <host>`, `-p <port>`, `-s <service>`, `--status <code>`, `-k <lead-kind>`, `-m <substr>`, `--live`;
 pass `--all` (the default for the entity views) to span every program instead of one.
 
+## Burp Suite / Caido integration
+
+kestrel maps the surface; Burp and Caido work it by hand. The bridge is that kestrel already holds
+the two things you'd otherwise re-enter into those tools — the **scope** and a **list of URLs** — so it
+hands them over, and keeps the proxy in bounds exactly like itself. Three pieces, one shared setting
+(`PROXY_URL`, default `http://127.0.0.1:8080`, asked once at onboarding and editable in `kestrel.conf`):
+
+**1. Proxy passthrough.** Route the requests kestrel makes at the target through an intercepting proxy,
+so its history/sitemap fills with the discovered surface. It is deliberately scoped to target traffic
+only (httpx, katana, ffuf and the target `curl`s): crt.sh, subfinder's sources and DNS stay direct, so
+the proxy never fills with OSINT noise.
+
+```
+kestrel recon acme --proxy        # this run only, through the configured proxy
+kestrel recon acme --no-proxy     # this run only, never (even if the program defaults to on)
+```
+
+At onboarding you choose whether a program proxies **by default**; the two flags are the per-run
+override. Before a proxied run kestrel **preflights the proxy port** and stops with a clear message if
+nothing is listening, rather than firing a whole run at a dead proxy.
+
+**2. Replay — the "I forgot the flag" safety net.** Re-running recon just to populate the proxy would
+re-enumerate and re-fuzz for nothing. Instead `kestrel replay` takes the surface kestrel **already
+found on disk** (live hosts, wayback URLs, crawl output, URL leads) and requests just those once
+through the proxy — no re-enumeration.
+
+```
+kestrel replay acme               # hydrate Burp/Caido from what's already on disk
+```
+
+**3. Scope export.** `kestrel export` writes the program's scope in the formats Burp and Caido import,
+so you don't re-enter it and the proxy's own scope matches kestrel's.
+
+```
+kestrel export acme               # both; or --burp / --caido
+```
+
+Output lands in `recon/export/`: `burp-scope.json` (Burp Target > Scope — host fields are regexes,
+wildcards include their subdomains, out-of-scope hosts/keywords become exclusions) and
+`caido-scope.json` + `caido-scope.txt` (Caido allow/deny globs). IP ranges are expressed where a host
+pattern can (single IPs and /8, /16, /24); anything else is listed so you can add it by hand, and Caido
+globs can't express CIDR at all (Burp handles those). The import formats shift between tool versions, so
+check the first import once.
+
 ## Retest
 
 `kestrel retest` re-enumerates subdomains, compares against a saved baseline, finds which new
 subdomains are live, and runs the web pipeline on just those. The first run seeds the baseline
 (a big "new" count then is enumeration variance, not real assets; the reliable signal is what
 is new **and** live). Port scanning is intentionally not part of retest — run `kestrel ports`
-separately, so the ownership gate and confirmation always apply.
+separately, so the declared-ranges-only targeting and the confirmation prompt always apply.
 
 ## Output
 

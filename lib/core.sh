@@ -118,6 +118,10 @@ load_program() {
   if [ -z "$YWH" ] && [ -s "$HEADERS_FILE" ]; then YWH="$(head -n1 "$HEADERS_FILE")"; fi
   export PROGRAM WORK UA YWH RATE CURATED HEADERS_FILE
   export PLATFORM="${PLATFORM:-}" PROGRAM_URL="${PROGRAM_URL:-}" PORTSCAN_ALLOWED="${PORTSCAN_ALLOWED:-n}"
+  # intercepting-proxy settings (Burp/Caido): the URL lives in PROXY_URL and the on/off
+  # preference in PROXY_DEFAULT. The engine-facing PROXY var is set ONLY by the command that
+  # runs a stage (recon/retest/replay), so a URL sitting in the config never proxies by itself.
+  export PROXY_URL="${PROXY_URL:-}" PROXY_DEFAULT="${PROXY_DEFAULT:-n}"
   export SCOPE_FILE="$WORK/recon/scope.txt"
   export APEX_FILE="$WORK/recon/apex.txt"
   export HOSTS_FILE="$WORK/recon/hosts.txt"
@@ -148,6 +152,50 @@ write_legacy_env() {
 
 # have <tool> — is it on PATH
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# ---- intercepting proxy (Burp / Caido) ------------------------------------
+# proxy_default_url — the proxy configured for this program (PROXY_URL in kestrel.conf),
+# else the conventional Burp/Caido default on localhost:8080.
+proxy_default_url() { printf '%s' "${PROXY_URL:-http://127.0.0.1:8080}"; }
+
+# resolve_proxy on|off|auto — echo the proxy URL to use (empty = don't proxy).
+#   on   : the configured/default URL        (a --proxy flag)
+#   off  : nothing                            (a --no-proxy flag)
+#   auto : the URL iff PROXY_DEFAULT=y        (the program's onboarding choice)
+resolve_proxy() {
+  case "${1:-auto}" in
+    on)   proxy_default_url ;;
+    off)  : ;;
+    auto) [ "${PROXY_DEFAULT:-n}" = y ] && proxy_default_url || : ;;
+  esac
+}
+
+# proxy_for_run on|off|auto — set and export the engine-facing PROXY for this run.
+# Resolves the URL, preflights it (hard stop if nothing is listening — never fire a whole run at
+# a dead proxy), and prints the one-line notice. Call once in a command before running a stage.
+# Not in a subshell: ui_die must stop the command, not just a $(...) child.
+proxy_for_run() {
+  PROXY="$(resolve_proxy "${1:-auto}")"
+  if [ -n "$PROXY" ]; then
+    proxy_up "$PROXY" || ui_die "proxy not listening at $PROXY" "start Burp/Caido, or re-run with --no-proxy"
+    ui_info proxy "routing target traffic through $PROXY"
+  fi
+  export PROXY
+}
+
+# proxy_up <url|host:port> — true if something is listening there (TCP connect, no deps).
+# Used as a preflight so kestrel never fires a whole run at a proxy that isn't running.
+proxy_up() {
+  local hp="${1#*://}"; hp="${hp%%/*}"
+  local host="${hp%%:*}" port="${hp##*:}"
+  [ "$host" = "$port" ] && port=8080
+  [ -n "$host" ] || host=127.0.0.1
+  if have timeout; then
+    timeout 2 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null
+  else
+    (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null
+  fi
+}
 
 # count lines of a file (0 if missing)
 count_lines() { [ -f "$1" ] && wc -l < "$1" | tr -d ' ' || echo 0; }

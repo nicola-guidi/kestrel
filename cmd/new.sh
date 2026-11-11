@@ -84,7 +84,7 @@ cmd_new() {
 
   # ---------------------------------------------------------------- 4 · run settings
   ui_section settings
-  local wordlist rate rules portscan
+  local wordlist rate rules portscan proxy_default=n proxy_url=""
   wordlist="$(ui_ask 'Wordlist' "$KESTREL_ROOT/wordlists/curated.txt")"
   wordlist="${wordlist/#\~/$HOME}"
   [ -s "$wordlist" ] || ui_warn wordlist "$wordlist not found — fuzz will need it"
@@ -95,6 +95,10 @@ cmd_new() {
   done
   rules="$(ui_ask_block 'Program rules worth remembering (forbidden tests, limits…), optional')"
   if ui_yesno 'Port scanning allowed by the program?' n; then portscan=y; else portscan=n; fi
+  if ui_yesno 'Route traffic through an intercepting proxy (Burp/Caido) by default?' n; then
+    proxy_default=y
+    proxy_url="$(ui_ask 'Proxy URL' 'http://127.0.0.1:8080')"
+  fi
 
   # ---------------------------------------------------------------- write
   mkdir -p "$work"/{recon,content,js,notes}
@@ -123,7 +127,8 @@ cmd_new() {
   conf_write "$work/kestrel.conf" \
     PROGRAM "$name" PLATFORM "$platform" PROGRAM_URL "$url" \
     UA_SUFFIX "$ua_suffix" RATE "$rate" CURATED "$wordlist" \
-    PORTSCAN_ALLOWED "$portscan" CREATED "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    PORTSCAN_ALLOWED "$portscan" PROXY_DEFAULT "$proxy_default" PROXY_URL "$proxy_url" \
+    CREATED "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   load_program "$name"
   scope_rebuild || ui_die "could not build the scope files (check $work/scope)"
@@ -173,7 +178,7 @@ program_summary() {
   fi
   [ "$n" -eq 0 ] && ui_info header "none"
   scope_summary
-  ui_ok settings "rate $RATE req/s · port scan $([ "$PORTSCAN_ALLOWED" = y ] && echo allowed || echo 'not allowed')"
+  ui_ok settings "rate $RATE req/s · port scan $([ "$PORTSCAN_ALLOWED" = y ] && echo allowed || echo 'not allowed') · proxy $([ "${PROXY_DEFAULT:-n}" = y ] && echo "${PROXY_URL:-on}" || echo off)"
   [ -s "$WORK/notes/rules.md" ] && ui_info rules "$WORK/notes/rules.md"
   ui_info folder "$WORK"
 }

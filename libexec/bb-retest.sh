@@ -96,6 +96,8 @@ if [ -n "${HEADERS_FILE:-}" ] && [ -s "$HEADERS_FILE" ]; then
     case "$_h" in *:*) [ "$_h" = "$YWH" ] || HDRS+=(-H "$_h") ;; esac
   done < "$HEADERS_FILE"
 fi
+# PROXY (set by the kestrel command): route the newcomer probe through Burp/Caido.
+PX_HTTPX=(); [ -n "${PROXY:-}" ] && PX_HTTPX=(-proxy "$PROXY")
 
 BASE="recon/retest/baseline_subs.txt"              # the known universe of in-scope subs
 STAMP="$(date +%Y%m%d_%H%M)"
@@ -192,7 +194,7 @@ fi
 if [ -s "$RDIR/new_resolved.txt" ]; then
   need httpx
   log "httpx on $(wc -l < "$RDIR/new_resolved.txt") newcomers (rl $RATE)"
-  httpx -l "$RDIR/new_resolved.txt" "${HDRS[@]}" \
+  httpx -l "$RDIR/new_resolved.txt" "${HDRS[@]}" ${PX_HTTPX[@]+"${PX_HTTPX[@]}"} \
     -sc -title -td -server -cl -location \
     -r "$DNS_RESOLVERS" \
     -t 50 -timeout 5 -retries 1 -rl "$RATE" -silent \

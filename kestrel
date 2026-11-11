@@ -11,6 +11,8 @@
 #   kestrel triage [program]     offline triage of the catch into leads (no traffic)
 #   kestrel db <sub>             centralised store: recall any host, IP or path with all you found
 #   kestrel report [program]     build one HTML report from the data you have
+#   kestrel export [program]     export the scope to Burp / Caido (no traffic)
+#   kestrel replay [program]     re-send the discovered surface through Burp/Caido (--proxy)
 #   kestrel status [program]     what the run produced, leads first
 #   kestrel verify [program]     scope QA: nothing out of scope touched
 #   kestrel retest [program]     only what is new since the last scan
@@ -45,7 +47,7 @@ done
 
 usage() {
   ui_banner "$KESTREL_VERSION"
-  sed -n '5,21p' "$KESTREL_ROOT/kestrel" | sed 's/^# \{0,1\}//' >&2
+  sed -n '5,23p' "$KESTREL_ROOT/kestrel" | sed 's/^# \{0,1\}//' >&2
   printf '\n  kestrel <command> --help for details\n\n' >&2
 }
 
@@ -67,6 +69,8 @@ dispatch() {
     scope)            cmd_scope ${prog:+"$prog"} "$@" ;;
     info)             cmd_info ${prog:+"$prog"} "$@" ;;
     report)           cmd_report ${prog:+"$prog"} "$@" ;;
+    export)           cmd_export ${prog:+"$prog"} "$@" ;;
+    replay)           cmd_replay ${prog:+"$prog"} "$@" ;;
     ls|list)          cmd_ls ;;
     doctor)           cmd_doctor ${prog:+"$prog"} "$@" ;;
     recon)            cmd_recon ${prog:+"$prog"} "$@" ;;

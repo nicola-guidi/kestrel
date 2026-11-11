@@ -147,6 +147,20 @@ fi
 # timeout for EVERY curl in the loops: a hanging host (WAF dropping us) won't block everything
 CT=(--connect-timeout 5 --max-time 12)
 
+# PROXY (set only when a kestrel command exports it): route TARGET traffic through an
+# intercepting proxy (Burp / Caido) so every request kestrel makes lands in its history/sitemap.
+# Deliberately scoped: only the invocations that hit the target are proxied. Non-target traffic
+# (crt.sh, subfinder's sources, DNS) stays direct, so the proxy never fills with OSINT noise.
+PX_HTTPX=(); PX_FFUF=(); PX_CURL=()
+if [ -n "${PROXY:-}" ]; then
+  PX_HTTPX=(-proxy "$PROXY")   # httpx and katana both take -proxy
+  PX_FFUF=(-x "$PROXY")
+  PX_CURL=(-x "$PROXY")
+  log "proxy: routing target traffic through $PROXY"
+fi
+# tcurl: a curl that honours the proxy for TARGET requests. Plain 'curl' stays direct (crt.sh).
+tcurl() { curl ${PX_CURL[@]+"${PX_CURL[@]}"} "$@"; }
+
 # CASE A (fixed host list) vs CASE B (wildcard): is there a non-empty apex.txt?
 # NB: the MIXED scenario (wildcard + standalone hosts) will be handled by a unified
 #     scope.txt model — to be done together with bb-init (deferred).
@@ -255,7 +269,7 @@ stage_live() {
 
   need httpx
   log "httpx: live-host triage over $(wc -l < "$src") hosts (rl $RATE, timeout 5)"
-  httpx -l "$src" "${HDRS[@]}" \
+  httpx -l "$src" "${HDRS[@]}" ${PX_HTTPX[@]+"${PX_HTTPX[@]}"} \
     -sc -title -td -server -cl -location \
     -r "$DNS_RESOLVERS" \
     -t 50 -timeout 5 -retries 1 -rl "$RATE" -stats \
@@ -320,8 +334,8 @@ stage_catchall() {
   while read -r u; do
     [ -z "$u" ] && continue
     i=$((i+1)); printf '\r   [%d/%d] %-50.50s' "$i" "$n" "$u" >&2
-    c1=$(curl -s -o /dev/null -w '%{http_code}' "${HDRS[@]}" "$u/zzznope$RANDOM" || echo 000)
-    c2=$(curl -s -o /dev/null -w '%{http_code}' "${HDRS[@]}" "$u/zzzxxx$RANDOM" || echo 000)
+    c1=$(tcurl -s -o /dev/null -w '%{http_code}' "${HDRS[@]}" "$u/zzznope$RANDOM" || echo 000)
+    c2=$(tcurl -s -o /dev/null -w '%{http_code}' "${HDRS[@]}" "$u/zzzxxx$RANDOM" || echo 000)
     if [ "$c1" = "200" ] && [ "$c2" = "200" ]; then echo "$u" >> recon/surface_catchall.txt
     else                                            echo "$u" >> recon/surface_ok.txt; fi
   done < recon/surface.txt
@@ -338,7 +352,7 @@ stage_quickhits() {
   local PATHS="/.git/config,/.env,/api,/swagger-ui.html,/v3/api-docs,/wp-json/,/actuator/env"
   log "quick-hits: $n hosts, ~$((n*7)) requests"
   httpx -l recon/surface_ok.txt \
-    -path "$PATHS" "${HDRS[@]}" \
+    -path "$PATHS" "${HDRS[@]}" ${PX_HTTPX[@]+"${PX_HTTPX[@]}"} \
     -sc -cl -mc 200,401,403,500 \
     -t 20 -rl "$RATE" -silent \
     -o recon/quickhits.txt >>"$TOOLLOG" 2>&1
@@ -408,7 +422,7 @@ stage_harvest() {
 
   # a) hosts with a REAL robots.txt (-ms Disallow drops catch-all index pages)
   log "robots: looking for real robots.txt over $(wc -l < recon/surface.txt) hosts"
-  httpx -l recon/surface.txt -path /robots.txt "${HDRS[@]}" \
+  httpx -l recon/surface.txt -path /robots.txt "${HDRS[@]}" ${PX_HTTPX[@]+"${PX_HTTPX[@]}"} \
     -mc 200 -ms "Disallow" -r "$DNS_RESOLVERS" \
     -t 50 -timeout 5 -rl "$RATE" -silent -o recon/robots_urls.txt >>"$TOOLLOG" 2>&1 || true
   sort -u recon/robots_urls.txt -o recon/robots_urls.txt 2>/dev/null || : > recon/robots_urls.txt
@@ -419,7 +433,7 @@ stage_harvest() {
   while read -r u; do
     [ -z "$u" ] && continue
     base="${u%/robots.txt}"
-    curl -s "${CT[@]}" "${HDRS[@]}" "$u" | tr -d '\r' \
+    tcurl -s "${CT[@]}" "${HDRS[@]}" "$u" | tr -d '\r' \
       | grep -iE '^(dis)?allow:|^sitemap:' \
       | sed -E "s#^#${base}  ->  #" || true
   done < recon/robots_urls.txt | sort -u > recon/robots_paths.txt
@@ -433,7 +447,7 @@ stage_harvest() {
   while read -r u; do
     [ -z "$u" ] && continue
     base="${u%/robots.txt}"
-    curl -s "${CT[@]}" "${HDRS[@]}" "$u" | tr -d '\r' \
+    tcurl -s "${CT[@]}" "${HDRS[@]}" "$u" | tr -d '\r' \
       | grep -iE '^(dis)?allow:[[:space:]]*/' \
       | sed -E 's/^[^:]+:[[:space:]]*//; s/\$$//; s/\*.*$//' \
       | awk 'NF && $0!="/"' \
@@ -454,7 +468,7 @@ stage_harvest() {
       i=$((i+1)); printf '\r   [%d/%d] %-50.50s' "$i" "$nt" "$t" >&2
       # command substitution (not 'read < <(...)'): curl's -w has no trailing newline,
       # and a newline-less 'read' returns non-zero → under set -e it would abort the stage.
-      resp=$(curl -s -o /dev/null -w '%{http_code} %{size_download}' "${CT[@]}" "${HDRS[@]}" "$t" 2>/dev/null || echo "000 0")
+      resp=$(tcurl -s -o /dev/null -w '%{http_code} %{size_download}' "${CT[@]}" "${HDRS[@]}" "$t" 2>/dev/null || echo "000 0")
       printf '%s %s %s\n' "${resp%% *}" "${resp##* }" "$t" >> recon/robots_checked.txt
     done < recon/robots_targets.txt
     printf '\r%-70s\r' '' >&2
@@ -467,10 +481,10 @@ stage_harvest() {
   : > recon/sitemap_urls.txt
   while read -r s; do
     [ -z "$s" ] && continue
-    locs=$(curl -s "${CT[@]}" "${HDRS[@]}" "$s" | grep -oE '<loc>[^<]+' | sed 's/<loc>//') || true
+    locs=$(tcurl -s "${CT[@]}" "${HDRS[@]}" "$s" | grep -oE '<loc>[^<]+' | sed 's/<loc>//') || true
     if echo "$locs" | grep -qE '\.xml($|\?)'; then      # sitemapindex → go one level down
       echo "$locs" | grep -E '\.xml($|\?)' | while read -r c; do
-        curl -s "${CT[@]}" "${HDRS[@]}" "$c" | grep -oE '<loc>[^<]+' | sed 's/<loc>//' || true
+        tcurl -s "${CT[@]}" "${HDRS[@]}" "$c" | grep -oE '<loc>[^<]+' | sed 's/<loc>//' || true
       done
     else
       echo "$locs"
@@ -530,7 +544,7 @@ stage_fuzz() {
       continue
     fi
     ffuf -u "$u/FUZZ" -w recon/wl_trimmed.txt \
-      "${HDRS[@]}" \
+      "${HDRS[@]}" ${PX_FFUF[@]+"${PX_FFUF[@]}"} \
       -ac -mc 200,301,302,401,403,500 \
       -t 20 -rate "$RATE" -p 0.1 -maxtime-job 180 -s \
       -o "content/ffuf_${host}.json" -of json >>"$TOOLLOG" 2>&1 || true
@@ -569,7 +583,7 @@ stage_api() {
     i=$((i+1)); printf '\r   [%d/%d] %-50.50s' "$i" "$n" "$u" >&2
     if [ "$RESUMING" = 1 ] && [ -n "${_done[$u]:-}" ]; then continue; fi
     for p in $APIP; do
-      resp=$(curl -s "${CT[@]}" -o "$body" -w '%{http_code} %{size_download} %{content_type}' "${HDRS[@]}" "$u$p" || echo "000 0 -")
+      resp=$(tcurl -s "${CT[@]}" -o "$body" -w '%{http_code} %{size_download} %{content_type}' "${HDRS[@]}" "$u$p" || echo "000 0 -")
       code=${resp%% *}; rest=${resp#* }; size=${rest%% *}; ct=${rest#* }
       case "$ct" in *json*) : ;; *) continue ;; esac
       [ "$code" = "200" ] || continue
@@ -640,7 +654,7 @@ stage_js() {
     [ -n "$_cos" ] && KFLAGS=(-crawl-out-scope "$_cos")
     log "js recon: katana (crawl with JS execution) over $n hosts, rl $RATE d 2 — more reliable than regex."
     [ -n "$_cos" ] && log "js recon: excluding out-of-scope paths from the crawl (-crawl-out-scope)."
-    katana -list "$src" -jc -d 2 -rl "$RATE" "${KFLAGS[@]}" -silent 2>>"$TOOLLOG" \
+    katana -list "$src" -jc -d 2 -rl "$RATE" "${KFLAGS[@]}" ${PX_HTTPX[@]+"${PX_HTTPX[@]}"} -silent 2>>"$TOOLLOG" \
       | grep -iE '\.(js|mjs)($|\?)' | sort -u > js/_urls.txt || true
   else
     log "js recon: katana absent → naive crawl (regex on the home page) over $n hosts. (Install katana for a lot more.)"
@@ -648,7 +662,7 @@ stage_js() {
     while read -r u; do
       [ -z "$u" ] && continue
       i=$((i+1)); printf '\r   crawl [%d/%d]' "$i" "$n" >&2
-      curl -sf "${CT[@]}" "${HDRS[@]}" "$u/" 2>/dev/null \
+      tcurl -sf "${CT[@]}" "${HDRS[@]}" "$u/" 2>/dev/null \
         | grep -oiE '(src|href)="[^"]+\.(js|mjs)"' | sed -E 's/.*="//; s/"$//' \
         | while read -r j; do case "$j" in /*) echo "$u$j";; http*) echo "$j";; *) echo "$u/$j";; esac; done
     done < "$src" | sort -u > js/_urls.txt
@@ -665,7 +679,7 @@ stage_js() {
     [ -z "$j" ] && continue
     i=$((i+1)); printf '\r   download [%d/%d]' "$i" "$tot" >&2
     host=$(echo "$j" | sed -E 's#https?://##; s#/.*##'); mkdir -p "js/$host"
-    curl -sf "${CT[@]}" "${HDRS[@]}" "$j" -o "js/$host/$(echo "$j"|md5sum|cut -c1-8).js" || true
+    tcurl -sf "${CT[@]}" "${HDRS[@]}" "$j" -o "js/$host/$(echo "$j"|md5sum|cut -c1-8).js" || true
   done < js/_urls.txt
   printf '\r%-30s\r' '' >&2
   find js -type d -empty -delete 2>/dev/null || true   # drop host dirs left empty

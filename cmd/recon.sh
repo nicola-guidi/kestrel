@@ -20,6 +20,9 @@ usage: kestrel recon [program] [stage] [options]
   --fresh           ignore an interrupted run, start over
   --from <stage>    start from this stage
   --skip a,b        skip these stages
+  --proxy[=url]     route target traffic through an intercepting proxy (Burp/Caido);
+                    url defaults to the program's PROXY_URL, else http://127.0.0.1:8080
+  --no-proxy        do not proxy this run, even if the program defaults to proxying
 
   Details of every stage: notes/recon.log · tools output: notes/tools.log
 EOF
@@ -53,13 +56,16 @@ recon_suspicious() {
 }
 
 cmd_recon() {
-  local prog="" only="" from="" skip="" fresh=0
+  local prog="" only="" from="" skip="" fresh=0 proxy_want=auto
   while [ $# -gt 0 ]; do
     case "$1" in
       -h|--help) cmd_recon_help; return 0 ;;
       --fresh)   fresh=1 ;;
       --from)    from="${2:-}"; shift ;;
       --skip)    skip="${2:-}"; shift ;;
+      --proxy)      proxy_want=on ;;
+      --proxy=*)    proxy_want=on; PROXY_URL="${1#--proxy=}" ;;
+      --no-proxy)   proxy_want=off ;;
       -*)        ui_die "unknown option '$1'" "kestrel recon --help" ;;
       *)
         if [[ " ${RECON_STAGES[*]} all " == *" $1 "* ]]; then only="$1"
@@ -84,6 +90,7 @@ cmd_recon() {
   ui_info scope "$(count_lines recon/apex.txt) wildcard · $(count_lines recon/hosts.txt) host · $(count_lines recon/oos.txt) excluded"
   ui_info identity "$UA$([ -s "$HEADERS_FILE" ] && printf ' · %s header(s)' "$(count_lines "$HEADERS_FILE")")"
   ui_info rate "$RATE req/s"
+  proxy_for_run "$proxy_want"
   if [ -f notes/rules.md ]; then
     local r; r="$(grep -v -e '^#' -e '^- ' notes/rules.md | sed '/^[[:space:]]*$/d' | head -n 3)"
     [ -n "$r" ] && while IFS= read -r t; do ui_info rules "$t"; done <<< "$r"

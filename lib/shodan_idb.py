@@ -193,31 +193,42 @@ def main(work, max_ips):
 
     # ---- query InternetDB
     queried = known = open_ports = vulns = errors = 0
+    interrupted = 0
     records = []
     total = len(selected)
-    for n, (ip, src) in enumerate(selected, 1):
-        print(f"\r   shodan {n}/{total} · known {known}", end="", file=sys.stderr, flush=True)
-        queried += 1
-        try:
-            req = urllib.request.Request(API + ip, headers={"User-Agent": "kestrel"})
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                rec = json.load(r)
-        except urllib.error.HTTPError as e:
-            if e.code != 404:          # 404 = Shodan has nothing on this IP
+    # Ctrl-C stops the queries but is NOT fatal: whatever was collected so far is written out and
+    # the summary still prints (with INTERRUPTED=1), so a long lookup can be cut short without
+    # losing the known IPs already gathered and without an ugly traceback.
+    try:
+        for n, (ip, src) in enumerate(selected, 1):
+            # \033[K clears to end of line so a shorter progress string never leaves the tail of a
+            # longer line (e.g. the ui_running message) showing behind it.
+            print(f"\r\033[K   shodan {n}/{total} · known {known}", end="", file=sys.stderr, flush=True)
+            queried += 1
+            try:
+                req = urllib.request.Request(API + ip, headers={"User-Agent": "kestrel"})
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                    rec = json.load(r)
+            except urllib.error.HTTPError as e:
+                if e.code != 404:          # 404 = Shodan has nothing on this IP
+                    errors += 1
+                rec = None
+            except (urllib.error.URLError, OSError, ValueError):
                 errors += 1
-            rec = None
-        except (urllib.error.URLError, OSError, ValueError):
-            errors += 1
-            rec = None
-        if rec and rec.get("ports"):
-            rec["source"] = src
-            records.append(rec)
-            known += 1
-            open_ports += len(rec.get("ports", []))
-            vulns += len(rec.get("vulns", []))
-        time.sleep(DELAY)
-    if total:
-        print("\r" + " " * 48 + "\r", end="", file=sys.stderr)
+                rec = None
+            if rec and rec.get("ports"):
+                rec["source"] = src
+                records.append(rec)
+                known += 1
+                open_ports += len(rec.get("ports", []))
+                vulns += len(rec.get("vulns", []))
+            time.sleep(DELAY)
+    except KeyboardInterrupt:
+        interrupted = 1
+        print(f"\r\033[K   shodan interrupted at {queried}/{total} — saving {known} known so far…",
+              file=sys.stderr)
+    if total and not interrupted:
+        print("\r\033[K", end="", file=sys.stderr)
 
     records.sort(key=lambda r: ipaddress.ip_address(r.get("ip", "0.0.0.0")))
     with open(os.path.join(out_dir, "shodan.jsonl"), "w") as fh:
@@ -246,6 +257,7 @@ def main(work, max_ips):
     print(f"THIRDPARTY_EXCLUDED={third_party}")
     print(f"CAPPED={capped}")
     print(f"ERRORS={errors}")
+    print(f"INTERRUPTED={interrupted}")
     return 0
 
 

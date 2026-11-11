@@ -42,7 +42,7 @@ cmd_shodan() {
 
   ui_running shodan "querying InternetDB over the collected IPs (live assets first)…"
   local out; out="$(python3 "$KESTREL_ROOT/lib/shodan_idb.py" "$WORK" "$max")" || ui_die "shodan lookup failed"
-  local SH_IPS SH_QUERIED SH_KNOWN SH_PORTS SH_VULNS SH_SKIPPED_OOS SH_THIRDPARTY_EXCLUDED SH_CAPPED SH_ERRORS
+  local SH_IPS SH_QUERIED SH_KNOWN SH_PORTS SH_VULNS SH_SKIPPED_OOS SH_THIRDPARTY_EXCLUDED SH_CAPPED SH_ERRORS SH_INTERRUPTED
   eval "$(printf '%s\n' "$out" | sed 's/^\([A-Z0-9_]*\)=\(.*\)$/SH_\1=\x27\2\x27/')"
 
   if [ "${SH_KNOWN:-0}" -gt 0 ]; then
@@ -56,6 +56,7 @@ cmd_shodan() {
   [ "${SH_SKIPPED_OOS:-0}" -gt 0 ]        && ui_ok scope "${SH_SKIPPED_OOS} out-of-scope IP(s) skipped"
   [ "${SH_CAPPED:-0}" -gt 0 ]             && ui_info capped "${SH_CAPPED} IP(s) over the ${max} cap not checked (raise with --max)"
   [ "${SH_ERRORS:-0}" -gt 0 ]             && ui_warn errors "${SH_ERRORS} lookup(s) failed (network / rate limit)"
+  [ "${SH_INTERRUPTED:-0}" = 1 ]          && ui_warn interrupted "stopped early (Ctrl-C) — the ${SH_KNOWN:-0} known IP(s) so far are saved · re-run for a full pass"
 
   ui_blank
   ui_ok done "$(ui_elapsed $(( $(date +%s) - t0 ))) · recon/ports/shodan.*"

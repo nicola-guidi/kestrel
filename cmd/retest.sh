@@ -3,11 +3,14 @@
 # Raw data per run in recon/retest/<stamp>/ · engine output in notes/retest.log.
 
 cmd_retest() {
-  local prog="" args=() a
+  local prog="" args=() a proxy_want=auto
   for a in "$@"; do
     case "$a" in
-      -h|--help) printf 'usage: kestrel retest [program] [--shallow]\n\n  New subdomains since the last scan, which are live, then the pipeline on them.\n  --shallow   stop at the new live hosts\n' >&2; return 0 ;;
+      -h|--help) printf 'usage: kestrel retest [program] [--shallow] [--proxy[=url]] [--no-proxy]\n\n  New subdomains since the last scan, which are live, then the pipeline on them.\n  --shallow   stop at the new live hosts\n  --proxy     route the newcomer probe + pipeline through Burp/Caido\n  --no-proxy  do not proxy this run\n' >&2; return 0 ;;
       --shallow|--no-deep) args+=(--shallow) ;;
+      --proxy)    proxy_want=on ;;
+      --proxy=*)  proxy_want=on; PROXY_URL="${a#--proxy=}" ;;
+      --no-proxy) proxy_want=off ;;
       -*) ui_die "unknown option '$a'" "kestrel retest --help" ;;
       *) prog="$a" ;;
     esac
@@ -17,6 +20,7 @@ cmd_retest() {
   ui_header retest "$prog"
   tool_ok httpx || ui_die "httpx missing" "kestrel doctor --install"
   [ -s recon/apex.txt ] || ui_die "no wildcard in scope: nothing to re-enumerate" "kestrel recon $prog"
+  proxy_for_run "$proxy_want"
 
   if [ -s notes/runs.log ]; then
     local lr; lr="$(tail -n1 notes/runs.log | cut -d' ' -f1)"

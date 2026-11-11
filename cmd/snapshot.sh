@@ -5,23 +5,24 @@
 # whenever you want "a bit more info"; it feeds nothing else (not the report, not triage, not the
 # db) and nothing depends on it.
 #
-# By default it shoots only the TRIAGE LEADS — the pages triage already flagged as interesting
-# (admin panels, open APIs, exposed services, juicy fuzz hits, odd robots entries, interesting
-# wayback URLs) — so you get a handful of pages that count, not thousands. Use --live to screenshot
-# every live host instead.
+# By default it shoots one screenshot per LIVE HOST (recon/live.txt) — the real web surface, one
+# page per host. Use --leads to shoot only the triage leads instead: the hosts triage flagged as
+# interesting (admin panels, open APIs, exposed services, juicy fuzz hits), deduped to one
+# screenshot per host so the gallery stays small.
 #
 # In scope only (the URLs come from kestrel's own scoped recon/triage). Active traffic (it loads the
 # pages), so it honours the program's rate and identity, and is proxy-aware.
 #
-#   kestrel snapshot [program] [--live] [--surface] [--proxy[=url]] [--no-proxy]
-#     --live      screenshot every live host (recon/live.txt) instead of just the triage leads
+#   kestrel snapshot [program] [--leads] [--surface] [--proxy[=url]] [--no-proxy]
+#     --leads     screenshot only the triage-flagged hosts (one shot per host), not every live host
 #     --surface   screenshot the wider surface (recon/surface_ok.txt) instead
 
 cmd_snapshot() {
-  local prog="" proxy_want=auto src=leads a
+  local prog="" proxy_want=auto src=live a
   for a in "$@"; do
     case "$a" in
-      -h|--help) sed -n '2,17p' "$KESTREL_ROOT/cmd/snapshot.sh" | sed 's/^# \{0,1\}//' >&2; return 0 ;;
+      -h|--help) sed -n '2,18p' "$KESTREL_ROOT/cmd/snapshot.sh" | sed 's/^# \{0,1\}//' >&2; return 0 ;;
+      --leads)    src=leads ;;
       --live)     src=live ;;
       --surface)  src=surface ;;
       --proxy)    proxy_want=on ;;
@@ -41,15 +42,18 @@ cmd_snapshot() {
   local urls; urls="$(mktemp)"
   case "$src" in
     leads)
-      # the pages triage flagged as worth a look — on-target HTTP endpoints only
+      # the hosts triage flagged as worth a look — on-target HTTP endpoints, deduped to ONE URL per
+      # host:port (the triage buckets are URL-level, so without this a host with many flagged paths
+      # would flood the gallery). wayback_interesting is left out on purpose: historical URLs, often
+      # thousands, not live pages to look at.
       local f
-      for f in admin_panels api_open exposed_services fuzz_juicy robots_nonstd wayback_interesting; do
+      for f in admin_panels api_open exposed_services fuzz_juicy robots_nonstd; do
         [ -s "recon/triage/$f.txt" ] && awk '{print $1}' "recon/triage/$f.txt"
-      done 2>/dev/null | grep -E '^https?://' | sort -u > "$urls" || true
+      done 2>/dev/null | grep -E '^https?://' | awk -F/ '!seen[$3]++' > "$urls" || true
       if [ ! -s "$urls" ]; then
         rm -f "$urls"
         ui_warn empty "no triage leads yet to screenshot"
-        ui_next "kestrel triage $prog   (or shoot every live host: kestrel snapshot $prog --live)"
+        ui_next "kestrel triage $prog   (or shoot every live host: kestrel snapshot $prog)"
         ui_blank; return 0
       fi ;;
     live)
@@ -62,8 +66,8 @@ cmd_snapshot() {
   local n; n="$(count_lines "$urls")"
   if [ "$n" -eq 0 ]; then rm -f "$urls"; ui_die "no URLs to screenshot"; fi
   case "$src" in
-    leads)   ui_info source "$n triage lead(s) — the pages worth a look (use --live for every host)" ;;
-    live)    ui_info source "$n live host(s)" ;;
+    leads)   ui_info source "$n triage-flagged host(s) — one shot each" ;;
+    live)    ui_info source "$n live host(s) (use --leads for just the triage-flagged ones)" ;;
     surface) ui_info source "$n surface URL(s)" ;;
   esac
 

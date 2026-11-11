@@ -297,14 +297,16 @@ optional, installs it with apt). It is active traffic (it loads the pages), so i
 program's **rate** and identity, and is **proxy-aware** (`--proxy` sends the screenshot requests
 through Burp/Caido too).
 
-By default it shoots only the **triage leads** — the pages triage already flagged as interesting
-(admin panels, open APIs, exposed services, juicy fuzz hits, odd robots entries, interesting wayback
-URLs) — so you get a handful of pages that count, not thousands. Run `kestrel triage` first so the
-leads exist. Use `--live` to screenshot every live host instead.
+By default it shoots **one screenshot per live host** (`recon/live.txt`) — the real web surface, one
+page per host. Use `--leads` to shoot only the **triage-flagged hosts** instead (admin panels, open
+APIs, exposed services, juicy fuzz hits), deduped to one shot per host so the gallery stays small —
+the triage buckets are URL-level, so without the dedup a host with many flagged paths would flood
+the gallery, and historical wayback URLs are left out on purpose. Run `kestrel triage` first so the
+leads exist.
 
 ```
-kestrel snapshot acme             # just the triage leads (the pages worth a look)
-kestrel snapshot acme --live      # every live host (can be a lot)
+kestrel snapshot acme             # one shot per live host (the full web surface)
+kestrel snapshot acme --leads     # only the triage-flagged hosts (one shot each)
 kestrel snapshot acme --surface   # the wider surface (recon/surface_ok.txt) instead
 ```
 

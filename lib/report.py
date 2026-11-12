@@ -28,8 +28,14 @@ h1{font-size:22px;margin:0 0 4px}
 .subt{color:#8b949e;margin-bottom:8px;font-size:13px;word-break:break-all}
 .meta{color:#8b949e;font-size:13px;margin:2px 0}
 h2{font-size:16px;border-bottom:1px solid #21262d;padding-bottom:6px;margin:32px 0 8px}
-nav{margin:14px 0 4px;position:sticky;top:0;background:#0d1117;padding:8px 0;border-bottom:1px solid #21262d}
-nav a{margin-right:16px;font-size:13px}
+nav{margin:14px 0 4px;position:sticky;top:0;background:#0d1117;padding:8px 0;border-bottom:1px solid #21262d;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;z-index:5}
+nav a{font-size:13px}
+nav a.off{opacity:.3}
+.navlinks{display:flex;flex-wrap:wrap;gap:0 16px}
+#q{background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;padding:5px 10px;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;min-width:220px;flex:1 1 240px}
+#q:focus{outline:none;border-color:#58a6ff}
+#qinfo{font-size:12px;color:#8b949e;white-space:nowrap}
+.nomatch{color:#6e7681;font-style:italic;margin:16px 0;display:none}
 .cards{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
 .card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px 14px;min-width:84px}
 .card .n{font-size:20px;font-weight:600;color:#e6edf3}
@@ -46,6 +52,78 @@ code{color:#e6edf3}
 .pill.pass{border-color:#238636;color:#3fb950}.pill.act{border-color:#9e6a03;color:#d29922}
 details{margin:6px 0}summary{cursor:pointer;color:#8b949e}
 h3.host{font-size:13px;color:#e6edf3;margin:14px 0 4px;font-family:ui-monospace,monospace}
+"""
+
+# Client-side live filter. Hides non-matching table rows, then tables / host-headers / section-
+# headers whose whole group ends up empty, and dims the nav links of hidden sections. No deps,
+# works offline from the file:// URL. '/' focuses the box, Esc clears it.
+FILTER_JS = r"""
+<script>
+(function(){
+  var q=document.getElementById('q'); if(!q) return;
+  var info=document.getElementById('qinfo'), none=document.getElementById('nomatch');
+  var wrap=document.querySelector('.wrap'), nodes=[].slice.call(wrap.children);
+  function isHostH3(n){return n.tagName==='H3'&&n.classList.contains('host');}
+  // mark the non-table content blocks we also filter by text
+  [].forEach.call(wrap.querySelectorAll('.cards,details,p,ul,ol'),function(el){
+    if(el.closest('table')) return;
+    if(el.classList.contains('subt')||el.classList.contains('meta')
+       ||el.classList.contains('nomatch')) return;
+    el.setAttribute('data-f','1');
+  });
+  function content(n){ // {isContent, visible} for a node, for group roll-up
+    if(n.tagName==='TABLE') return {c:true,v:n.__vis>0};
+    if(n.getAttribute&&n.getAttribute('data-f')==='1') return {c:true,v:n.style.display!=='none'};
+    return {c:false,v:false};
+  }
+  function run(){
+    var s=q.value.trim().toLowerCase(), hits=0;
+    [].forEach.call(document.querySelectorAll('table'),function(tb){
+      var vis=0;
+      [].forEach.call(tb.querySelectorAll('tr'),function(tr){
+        if(tr.querySelector('th')&&!tr.querySelector('td')) return; // header row: always kept
+        var m=!s||tr.textContent.toLowerCase().indexOf(s)>-1;
+        tr.style.display=m?'':'none'; if(m) vis++;
+      });
+      tb.__vis=vis; tb.style.display=(!s||vis>0)?'':'none';
+    });
+    [].forEach.call(wrap.querySelectorAll('[data-f="1"]'),function(el){
+      var m=!s||el.textContent.toLowerCase().indexOf(s)>-1;
+      el.style.display=m?'':'none';
+    });
+    // roll up: hide host-headers then section-headers whose group has nothing visible
+    for(var i=0;i<nodes.length;i++){
+      var n=nodes[i]; if(n.tagName!=='H2'&&!isHostH3(n)) continue;
+      var h2=n.tagName==='H2', any=false;
+      for(var j=i+1;j<nodes.length;j++){
+        var m=nodes[j];
+        if(m.tagName==='H2') break;
+        if(!h2&&isHostH3(m)) break;
+        var c=content(m); if(c.c&&c.v){any=true;break;}
+      }
+      n.style.display=(!s||any)?'':'none';
+    }
+    // dim nav links pointing at a now-hidden section
+    [].forEach.call(document.querySelectorAll('.navlinks a'),function(a){
+      var t=document.getElementById(a.getAttribute('href').slice(1));
+      a.classList.toggle('off', !!(s&&t&&t.style.display==='none'));
+    });
+    // count matched data rows only
+    hits=0;
+    [].forEach.call(document.querySelectorAll('table tr'),function(tr){
+      if(tr.querySelector('th')&&!tr.querySelector('td')) return;
+      if(tr.style.display!=='none'&&tr.closest('table').style.display!=='none') hits++;
+    });
+    info.textContent = s ? (hits+' row'+(hits===1?'':'s')) : '';
+    if(none) none.style.display = (s&&hits===0)?'block':'none';
+  }
+  q.addEventListener('input',run);
+  q.addEventListener('keydown',function(e){ if(e.key==='Escape'){q.value='';run();q.blur();} });
+  document.addEventListener('keydown',function(e){
+    if(e.key==='/'&&document.activeElement!==q){ e.preventDefault(); q.focus(); }
+  });
+})();
+</script>
 """
 
 
@@ -470,10 +548,15 @@ def main(w, out):
     section_retest(w, body, nav_items)
 
     if nav_items:
-        r += "<nav>" + "".join(f"<a href='#{i}'>{esc(t)}</a>" for i, t in nav_items) + "</nav>"
+        links = "".join(f"<a href='#{i}'>{esc(t)}</a>" for i, t in nav_items)
+        r += ("<nav><input id=q type=search autocomplete=off spellcheck=false "
+              "placeholder='filter everything — host, path, CVE, port, keyword  (press /)'>"
+              f"<span id=qinfo></span><span class=navlinks>{links}</span></nav>")
+        r += "<p class=nomatch id=nomatch>No rows match your filter.</p>"
     else:
         r += "<p class=empty>Nothing to report yet — run kestrel recon first.</p>"
     r.h += body.h
+    r += FILTER_JS
     r += "</div></body></html>"
 
     with open(out, "w", encoding="utf-8") as fh:

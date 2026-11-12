@@ -215,9 +215,15 @@ kestrel db stats [program]   # row counts per table
 kestrel db host www.acme.com # full dossier for one host (see below)
 kestrel db ip 203.0.113.10   # full dossier for one IP
 kestrel db path /admin       # every host exposing a URL whose path matches /admin
+kestrel db view hosts        # LIVE hosts, aligned table (add --dead for the rest, -n N to limit)
 kestrel db view services acme -s elastic   # table view with filters
 kestrel db query "SELECT ip, port, service FROM ports WHERE service LIKE '%elastic%'"
 ```
+
+`view` prints an aligned, one-line-per-row table (long cells are truncated with `…` so rows don't
+wrap). `view hosts` shows only **live** hosts by default — the dead ones are noise; add `--dead`
+(`-a`) to include them, and `-n N` to cap the rows. `query` instead returns raw tab-separated values,
+untouched, for piping or copy-paste.
 
 **Entity view — recall one host or IP and see everything.** The point of the db is that you ask
 for a host, URL or IP and it gathers across every table at once:

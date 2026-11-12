@@ -68,11 +68,12 @@ cmd_db() {
       python3 "$KESTREL_ROOT/lib/db.py" "$db" view "$kind" "$prog" "$@" ;;
 
     query)
-      [ -n "${1:-}" ] || ui_die "give a SQL statement" 'kestrel db query "SELECT * FROM hosts"'
-      local prog; prog="$(resolve_program "")"; load_program "$prog"
+      [ -n "${1:-}" ] || ui_die "give a SQL statement" 'kestrel db query "SELECT * FROM hosts" [program]'
+      local sql="$1"; shift 2>/dev/null || true
+      local prog; prog="$(resolve_program "${1:-}")"; load_program "$prog"
       local db="$WORK/kestrel.db"
       [ -f "$db" ] || ui_die "no db yet for $prog" "kestrel db sync $prog"
-      python3 "$KESTREL_ROOT/lib/db.py" "$db" query "$*" ;;
+      python3 "$KESTREL_ROOT/lib/db.py" "$db" query "$sql" ;;
 
     *) ui_die "unknown 'db $sub'" "kestrel db --help" ;;
   esac

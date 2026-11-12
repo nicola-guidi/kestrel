@@ -18,8 +18,10 @@ own program's data — nothing crosses between programs.
     db.py <db> path  <substr>   [program]         # every host exposing a matching path
     db.py <db> query "<sql>"
 
+`view` shows aligned, one-line-per-row tables (long cells truncated with …). `view hosts` shows
+LIVE hosts by default; add --dead (-a) to include the rest.
 Filters for `view`:  -S <substr> (host) · -p <port> · -s <substr> (service) · --status <code>
-                     -k <kind> (lead) · -m <substr> (url/value) · --live
+                     -k <kind> (lead) · -m <substr> (url/value) · --live · --dead · -n <limit>
 
 Entity views (host/ip/path) gather across ALL tables so one recall shows services, Shodan +
 CVEs, endpoints (live/crawl/wayback) and leads for the entity, plus the host<->IP link.
@@ -293,10 +295,41 @@ def _is_ip(x):
 
 
 def print_rows(rows, header=None):
+    """Raw, tab-separated — for `query`, where the caller wants the values untouched."""
     if header:
         print("\t".join(header))
     for r in rows:
         print("\t".join("" if c is None else str(c) for c in r))
+
+
+def print_table(rows, header, cap=64):
+    """Human-readable: columns aligned, long cells truncated to one line each (… marks a cut)."""
+    srows = [["" if c is None else str(c).replace("\t", " ") for c in r] for r in rows]
+    n = len(header)
+    width = []
+    for i in range(n):
+        w = len(header[i])
+        for r in srows:
+            if i < len(r):
+                w = max(w, len(r[i]))
+        width.append(min(w, cap))
+
+    def cut(s, w):
+        return s if len(s) <= w else s[:w - 1] + "…"
+
+    def line(cells):
+        out = []
+        for i in range(n):
+            c = cut(cells[i] if i < len(cells) else "", width[i])
+            out.append(c if i == n - 1 else c.ljust(width[i]))
+        return "  ".join(out).rstrip()
+
+    print(line(header))
+    print("  ".join("-" * width[i] for i in range(n)))
+    for r in srows:
+        print(line(r))
+    if not srows:
+        print("(none)")
 
 
 def view(con, kind, program, args):
@@ -313,6 +346,8 @@ def view(con, kind, program, args):
         elif a == "-k": f["k"] = next(it, "")
         elif a == "-m": f["m"] = next(it, "")
         elif a == "--live": f["live"] = True
+        elif a in ("--dead", "-a", "--all-hosts"): f["dead"] = True
+        elif a in ("-n", "--limit"): f["limit"] = next(it, "")
         elif a == "--all": pass
         else: pass
 
@@ -327,9 +362,13 @@ def view(con, kind, program, args):
     progjoin = "JOIN programs p ON p.id=t.program_id" if allp else ""
 
     if kind == "hosts":
-        cols = f"{progcol}t.host, t.status, t.live, t.info"
+        # live hosts are what you act on — show those by default; --dead (-a) includes the rest
+        if f.get("dead"):
+            cols = f"{progcol}t.host, t.live, t.status, t.info"
+        else:
+            cols = f"{progcol}t.host, t.status, t.info"
+            where.append("t.live=1")
         if "S" in f: where.append("t.host LIKE ?"); params.append(f"%{f['S']}%")
-        if f.get("live"): where.append("t.live=1")
         order = "t.host"
     elif kind in ("services", "ports"):
         cols = f"{progcol}t.ip, t.port, t.service, t.version, t.source" if kind == "services" \
@@ -358,8 +397,14 @@ def view(con, kind, program, args):
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += f" ORDER BY {order}"
+    lim = str(f.get("limit", "")).strip()
+    if lim.isdigit() and int(lim) > 0:
+        sql += " LIMIT ?"; params.append(int(lim))
     cur = con.execute(sql, params)
-    print_rows(cur.fetchall(), [d[0] for d in cur.description])
+    out = cur.fetchall()
+    print_table(out, [d[0] for d in cur.description])
+    if kind == "hosts" and not f.get("dead"):
+        print(f"\n({len(out)} live host(s); add --dead to include the rest, -n N to limit)")
     return 0
 
 
@@ -368,7 +413,7 @@ def _section(title, rows, header):
     if not rows:
         return
     print(f"\n# {title}")
-    print_rows(rows, header)
+    print_table(rows, header)
 
 
 def entity_host(con, name, allp):

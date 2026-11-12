@@ -5,21 +5,21 @@ from kestrel's richer data (hosts with status, services, ports, CVEs, endpoints,
 leads: secrets, params, admin panels, exposed services, ...).
 
 The flat files under each program folder stay the source of truth; this db is a DERIVED store,
-rebuilt any time by reading them (kestrel db sync). One shared SQLite file, default
-~/hunts/kestrel.db, inspectable with the `sqlite3` CLI or any viewer.
+rebuilt any time by reading them (kestrel db sync). One SQLite file PER PROGRAM,
+<program_dir>/kestrel.db, inspectable with the `sqlite3` CLI or any viewer. Each db holds only its
+own program's data — nothing crosses between programs.
 
     db.py <db> init
     db.py <db> sync <workdir> <program>
     db.py <db> stats
-    db.py <db> view  <kind> <program|--all> [filters]   # hosts|services|ports|endpoints|vulns|leads
-    db.py <db> host  <hostname> [program|--all]         # full dossier for one host
-    db.py <db> ip    <address>  [program|--all]         # full dossier for one IP
-    db.py <db> path  <substr>   [program|--all]         # every host exposing a matching path
+    db.py <db> view  <kind> <program> [filters]   # hosts|services|ports|endpoints|vulns|leads
+    db.py <db> host  <hostname> [program]         # full dossier for one host
+    db.py <db> ip    <address>  [program]         # full dossier for one IP
+    db.py <db> path  <substr>   [program]         # every host exposing a matching path
     db.py <db> query "<sql>"
-    db.py <db> shared-ips | shared-hosts
 
 Filters for `view`:  -S <substr> (host) · -p <port> · -s <substr> (service) · --status <code>
-                     -k <kind> (lead) · -m <substr> (url/value) · --live · --all
+                     -k <kind> (lead) · -m <substr> (url/value) · --live
 
 Entity views (host/ip/path) gather across ALL tables so one recall shows services, Shodan +
 CVEs, endpoints (live/crawl/wayback) and leads for the entity, plus the host<->IP link.
@@ -498,19 +498,6 @@ def main(argv):
             print("usage: db.py <db> query \"<sql>\"", file=sys.stderr); return 2
         cur = con.execute(argv[3])
         print_rows(cur.fetchall(), [d[0] for d in cur.description] if cur.description else None)
-    elif action == "shared-ips":
-        cur = con.execute(
-            "SELECT i.ip, COUNT(DISTINCT i.program_id) n, GROUP_CONCAT(DISTINCT p.name) "
-            "FROM ips i JOIN programs p ON p.id=i.program_id GROUP BY i.ip HAVING n>1 ORDER BY n DESC, i.ip")
-        print_rows(cur.fetchall(), ["ip", "programs", "names"])
-    elif action == "shared-hosts":
-        names = dict(con.execute("SELECT id, name FROM programs").fetchall())
-        reg = {}
-        for host, pid in con.execute("SELECT host, program_id FROM hosts").fetchall():
-            reg.setdefault(registrable(host), set()).add(pid)
-        out = [(d, len(ps), ",".join(sorted(names.get(p, str(p)) for p in ps)))
-               for d, ps in reg.items() if len(ps) > 1]
-        print_rows(sorted(out, key=lambda x: -x[1]), ["domain", "programs", "names"])
     else:
         print(f"unknown action '{action}'", file=sys.stderr); rc = 2
     con.close()

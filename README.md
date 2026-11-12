@@ -63,7 +63,7 @@ with apt. On non-Debian systems it tells you what to install by hand.
 | `kestrel retest [program]` | only what is new since the last scan | yes |
 | `kestrel secrets [program]` | GitHub leak hunting | OSINT |
 | `kestrel report [program]` | one HTML report from the data on disk | none |
-| `kestrel db <sub>` | centralised store: recall any host, IP or path with all you found | none |
+| `kestrel db <sub>` | per-program store: recall any host, IP or path with all you found | none |
 | `kestrel export [program]` | export the scope to Burp Suite / Caido | none |
 | `kestrel replay [program]` | re-send the discovered surface through Burp/Caido | yes (proxy) |
 | `kestrel snapshot [program]` | screenshot the live pages into a visual gallery | yes |
@@ -197,24 +197,26 @@ of recon / ports / triage / secrets / retest already run, on demand, no traffic.
 pass is refreshed automatically each time, and ffuf blanket-403 walls and firewalled IPs are
 collapsed so the real leads stand out. `--open` opens it in the browser.
 
-## Database (centralised, queryable)
+## Database (per program, queryable)
 
-`kestrel db` is a centralised SQLite store of everything kestrel collected on a target — in the
-spirit of Metasploit's db (hosts / services / vulns), but built from kestrel's richer data. It does
-**not** replace the flat files: they stay the source of truth, and the db is a derived store you can
-rebuild any time by reading them (`db sync` is idempotent). One shared file, `<workspace>/kestrel.db`,
-inspectable with the `sqlite3` CLI or any viewer — nothing hidden.
+`kestrel db` is a SQLite store of everything kestrel collected on a target — in the spirit of
+Metasploit's db (hosts / services / vulns), but built from kestrel's richer data. It does **not**
+replace the flat files: they stay the source of truth, and the db is a derived store you can rebuild
+any time by reading them (`db sync` is idempotent). **One db file per program**, at
+`<program_dir>/kestrel.db`, inspectable with the `sqlite3` CLI or any viewer — nothing hidden. Each
+program's db holds only its own data; nothing crosses between programs.
+
+The program defaults to the last one you worked on, and every subcommand takes an explicit
+`[program]` as its last argument.
 
 ```
-kestrel db sync [program]    # read the program's files on disk into the db (idempotent)
-kestrel db stats             # row counts per table
+kestrel db sync [program]    # read the program's files on disk into its db (idempotent)
+kestrel db stats [program]   # row counts per table
 kestrel db host www.acme.com # full dossier for one host (see below)
 kestrel db ip 203.0.113.10   # full dossier for one IP
 kestrel db path /admin       # every host exposing a URL whose path matches /admin
 kestrel db view services acme -s elastic   # table view with filters
 kestrel db query "SELECT ip, port, service FROM ports WHERE service LIKE '%elastic%'"
-kestrel db shared-ips        # IPs that appear in more than one program
-kestrel db shared-hosts      # registrable domains seen in more than one program
 ```
 
 **Entity view — recall one host or IP and see everything.** The point of the db is that you ask

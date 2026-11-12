@@ -9,7 +9,7 @@
 #   kestrel wayback [program]    historical URLs from public archives (OSINT, no traffic)
 #   kestrel secrets [program]    GitHub leak hunting (OSINT, no traffic)
 #   kestrel triage [program]     offline triage of the catch into leads (no traffic)
-#   kestrel db <sub>             centralised store: recall any host, IP or path with all you found
+#   kestrel db <sub>             per-program store: recall any host, IP or path with all you found
 #   kestrel report [program]     build one HTML report from the data you have
 #   kestrel export [program]     export the scope to Burp / Caido (no traffic)
 #   kestrel replay [program]     re-send the discovered surface through Burp/Caido (--proxy)

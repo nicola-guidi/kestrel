@@ -65,9 +65,10 @@ with apt. On non-Debian systems it tells you what to install by hand.
 | `kestrel report [program]` | one HTML report from the data on disk | none |
 | `kestrel db <sub>` | per-program store: recall any host, IP or path with all you found | none |
 | `kestrel export [program]` | export the scope to Burp Suite / Caido | none |
-| `kestrel replay [program]` | re-send the discovered surface through Burp/Caido | yes (proxy) |
+| `kestrel replay [program]` | re-send the discovered surface of live hosts through Burp/Caido | yes (proxy) |
 | `kestrel snapshot [program]` | screenshot the live pages into a visual gallery | yes |
 | `kestrel schedule [program]` | run retest automatically on a schedule (systemd/cron) | none |
+| `kestrel backup [program]` | archive the program folder (data, db, report) into one .tar.gz | none |
 
 The program name can be omitted: kestrel uses the last one you worked on. Every command has
 `kestrel <command> --help` for its own options.
@@ -273,11 +274,17 @@ nothing is listening, rather than firing a whole run at a dead proxy.
 
 **2. Replay — the "I forgot the flag" safety net.** Re-running recon just to populate the proxy would
 re-enumerate and re-fuzz for nothing. Instead `kestrel replay` takes the surface kestrel **already
-found on disk** (live hosts, wayback URLs, crawl output, URL leads) and requests just those once
-through the proxy — no re-enumeration.
+found on disk** and requests just those once through the proxy — no re-enumeration, no fuzzing.
+Only what is worth replaying: URLs on **live hosts** (`recon/live.txt`, already scope-filtered) from the
+live probe, the crawl and the triage leads, minus out-of-scope paths. Archived (wayback) URLs are left
+out by default — they are often hundreds of thousands, and many belong to hosts that no longer exist
+(those just fail DNS). `--wayback` adds them, still limited to live hosts. Before sending it shows the
+count per source and the time it will take at your rate; `--dry-run` shows that and sends nothing.
 
 ```
-kestrel replay acme               # hydrate Burp/Caido from what's already on disk
+kestrel replay acme --dry-run     # what would be sent, and how long it takes
+kestrel replay acme               # live hosts + crawl + triage leads, through the proxy
+kestrel replay acme --wayback     # also the archived URLs of live hosts (can be a lot)
 ```
 
 **3. Scope export.** `kestrel export` writes the program's scope in the formats Burp and Caido import,
@@ -321,6 +328,24 @@ kestrel snapshot acme --surface   # the wider surface (recon/surface_ok.txt) ins
 Output lands in `recon/snapshots/`: the PNGs plus `index.html`, a filterable grid with status and
 title per host — open it in a browser. Screenshots are candidates, not
 proof — verify a page by hand before acting on it.
+
+## Backup
+
+`kestrel backup [program]` writes the program's whole folder (scope, recon data, db, report, notes)
+into one timestamped `.tar.gz`, by default under `<workspace>/_backups/`. It is offline: it reads
+files on disk, sends no traffic and changes nothing in the program. The archive is checked by reading
+it back, never overwrites an existing one, and is written readable by you only.
+
+```
+kestrel backup acme               # <workspace>/_backups/acme-<timestamp>.tar.gz
+kestrel backup acme --lite        # without the screenshots (recon/snapshots), usually the bulk
+kestrel backup acme --out /mnt/usb
+kestrel backup --all              # every program, one archive each
+```
+
+The archive contains `headers.txt` (your identity or tokens) and any secrets found, so keep it as
+private as the folder itself. Restore with `tar -xzf <archive> -C <workspace>`; this does not ask
+before overwriting files that are already there.
 
 ## Scheduling
 

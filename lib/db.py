@@ -267,9 +267,21 @@ def sync(con, work, program):
     # leads (triage buckets + shodan ports)
     tri = os.path.join(recon, "triage")
     nl = 0
+    # leads are fully derived from recon/triage/*.txt, so rebuild them on every sync: it drops
+    # leads that no longer exist and replaces rows written by older (mis-mapped) versions
+    con.execute("DELETE FROM leads WHERE program_id=?", (pid,))
     for fname, (kind, has_host) in LEAD_FILES.items():
         for l in lines(os.path.join(tri, fname)):
-            if has_host and "\t" in l:
+            if kind == "js_secret" and "\t" in l:
+                # line is "js/<host>/<file>.js<TAB><name>=<secret>": the SECRET is the value and the
+                # host comes from the bundle path (it used to land in the host column, swapped)
+                rel, value = l.split("\t", 1)
+                parts = rel.replace("\\", "/").split("/")
+                host = parts[1] if len(parts) > 2 and parts[0] == "js" else ""
+            elif kind == "fuzz_juicy" and "\t" in l:
+                # line is "<host><TAB><url>": the URL is the lead, the host is its host
+                host, value = l.split("\t", 1)
+            elif has_host and "\t" in l:
                 value, host = l.split("\t", 1)
                 host = host.split(",")[0].strip()
             else:

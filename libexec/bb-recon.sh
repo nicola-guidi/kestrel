@@ -161,6 +161,31 @@ fi
 # tcurl: a curl that honours the proxy for TARGET requests. Plain 'curl' stays direct (crt.sh).
 tcurl() { curl ${PX_CURL[@]+"${PX_CURL[@]}"} "$@"; }
 
+# proxy liveness: the command layer preflights the proxy before we start, but it can die MID-RUN.
+# These let run_stage re-check it between stages so we stop instead of probing blind into a dead
+# proxy (every request would fail silently and the stage would write empty results).
+proxy_alive() {   # true if $PROXY's TCP port is accepting connections
+  local hp="${PROXY#*://}"; hp="${hp%%/*}"
+  local host="${hp%%:*}" port="${hp##*:}"
+  [ "$host" = "$port" ] && port=8080
+  [ -n "$host" ] || host=127.0.0.1
+  if have timeout; then timeout 2 bash -c "exec 3<>/dev/tcp/$host/$port" 2>/dev/null
+  else (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; fi
+}
+# stages that send traffic to the TARGET — these need the proxy up when --proxy is on
+_proxied_stage() { case "$1" in live|catchall|quickhits|harvest|fuzz|api|js) return 0 ;; *) return 1 ;; esac; }
+# proxy_guard <stage>: stop clean if --proxy is on, this stage hits the target, and the proxy went
+# down. Called both per-stage in the full pipeline and once at the single-stage dispatcher, so
+# `kestrel recon` (which runs one stage per engine call) is covered too.
+proxy_guard() {
+  [ -n "${PROXY:-}" ] || return 0
+  _proxied_stage "$1" || return 0
+  proxy_alive && return 0
+  printf '\n   \033[1;31m✗\033[0m  proxy %s went down — stopping before '\''%s'\'' instead of probing blind.\n' "$PROXY" "$1" >&2
+  printf '      reopen Burp/Caido and re-run, or replay what you already have:  kestrel replay <program> --proxy\n' >&2
+  exit 3
+}
+
 # CASE A (fixed host list) vs CASE B (wildcard): is there a non-empty apex.txt?
 # NB: the MIXED scenario (wildcard + standalone hosts) will be handled by a unified
 #     scope.txt model — to be done together with bb-init (deferred).
@@ -899,6 +924,9 @@ HTML_HEAD
 # stop, it logs and moves on — so a "launch and walk away" run always reaches the end.
 run_stage() {
   local s="$1"; shift || true
+  # proxy died mid-run? re-check before any target-hitting stage and stop clean (NOT inside the
+  # subshell below — a die there would only be caught and the pipeline would carry on blind).
+  proxy_guard "$s"
   printf '\n\033[1;35m━━━━━━━━━━━━━━  %s  ━━━━━━━━━━━━━━\033[0m\n' "$s" >&2
   # NB: '( ... ) || rc=$?' and NOT '( ... ); rc=$?' — under 'set -e' a failing subshell
   # aborts the parent BEFORE the next command, so the ';' form would kill the whole pipeline
@@ -933,6 +961,9 @@ usage() {
 }
 [ "$#" -ge 1 ] || usage
 stage="$1"; shift || true
+# single-stage runs (how `kestrel recon` drives the engine) skip run_stage, so guard here too.
+# For 'all', _proxied_stage is false, so this is a no-op and run_stage guards each stage instead.
+proxy_guard "$stage"
 case "$stage" in
   check)     stage_check "$@" ;;
   enum)      stage_enum "$@" ;;

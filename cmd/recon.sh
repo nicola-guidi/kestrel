@@ -131,6 +131,14 @@ cmd_recon() {
       TOOLLOG="$WORK/notes/tools.log" bash "$KESTREL_ROOT/libexec/bb-recon.sh" "$s"
     } >> notes/recon.log 2>&1 || rc=$?
     dur="$(ui_elapsed $(( $(date +%s) - ts )))"
+    # rc 3 = the engine's proxy guard: the proxy went down. Stop here, do NOT mark the stage done
+    # (so a re-run resumes from it) and do not carry on into stages that would probe blind.
+    if [ "$rc" -eq 3 ] && [ -n "${PROXY:-}" ]; then
+      ui_err stopped "proxy ${PROXY} went down before '$s' — nothing was sent to the target for it"
+      ui_info next "reopen Burp/Caido and re-run: kestrel recon $prog   (resumes from '$s')"
+      ui_info next "or send what is already found through the proxy: kestrel replay $prog --proxy"
+      ui_blank; return 1
+    fi
     if [ "$rc" -ne 0 ]; then
       ui_warn "$s" "$(recon_line "$s") · issues (notes/recon.log) · $dur"
     elif recon_suspicious "$s"; then
